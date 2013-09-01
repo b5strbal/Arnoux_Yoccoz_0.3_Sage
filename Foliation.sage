@@ -1,5 +1,6 @@
 from sage.structure.sage_object import SageObject
 from bisect import bisect
+from math import fmod
 
 def _mod(a, b):
     x = a % b
@@ -8,9 +9,13 @@ def _mod(a, b):
     else:
         return x
 
-#def _post_shift(permutation, k):
-#    n = permutation.size()
-#    return Permutation([_mod(permutation[i] - 1 + k, n) + 1 for i in range(n)])
+def _fmod(a, b):
+    x = fmod(a, b)
+    if x < 0:
+        return x + b
+    else:
+        return x
+
 
 def rotating_permutation(n, k):
     return Permutation([(i + k) % n + 1 for i in range(n)])
@@ -25,9 +30,8 @@ def singularity_permutation(permutation):
     return Permutation([p_inv[p[(i - 1) % n] % n] for i in range(n)])
 
 
-
 def _canonical_form(intex, twist):
-    one_minus_twist = _mod(1 - twist, 1)
+    one_minus_twist = _fmod(1 - twist, 1)
     rotateby = bisect(intex.range_singularities(), one_minus_twist)
     for i in [rotateby - 1, rotateby]:
         if abs(one_minus_twist - intex.range_singularities()[i]) < 0.000000001:
@@ -36,6 +40,47 @@ def _canonical_form(intex, twist):
     n = len(intex.lengths())
     return (iet.IntervalExchangeTransformation(rotating_permutation(n, rotateby) *\
             intex.permutation().to_permutation(), intex.lengths()), newtwist)
+
+def is_between(left_endpoint, right_endpoint, point):
+    if left_endpoint < right_endpoint:
+        if point <= left_endpoint or point > right_endpoint:
+            return False
+        else:
+            return True
+    else:
+        if point <= right_endpoint or point > left_endpoint:
+            return True
+        else:
+            return False
+
+class PointWithCoordinates(SageObject):
+    def __init__(self, point, coordinates):
+        self.point = point
+        self.coordinates = coordinates
+
+    def __repr__(self):
+        return repr((self.point, self.coordinates))
+
+    def __add__(self, other):
+        new_point = PointWithCoordinates(self.point + other.point, 
+                self.coordinates + other.coordinates)
+        if new_point.point >= 1:
+            new_point.point -= 1
+            for i in range(len(self.coordinates) - 1):
+                new_point.coordinates[i] -= 1
+        return new_point
+
+    def __sub__(self, other):
+        new_point = PointWithCoordinates(self.point - other.point, 
+                self.coordinates - other.coordinates)
+        if new_point.point < 0:
+            new_point.point += 1
+            for i in range(len(self.coordinates) - 1):
+                new_point.coordinates[i] += 1
+        return new_point       
+
+ 
+
 
 class Foliation(SageObject):
     r"""
@@ -49,6 +94,16 @@ class Foliation(SageObject):
         self._intex = ret[0]
         self._twist = ret[1]
         self._singularity_cycles = singularity_permutation(self._intex.permutation().to_permutation()).to_cycles()
+        self._translation_matrix = matrix(self.num_intervals(), self.num_intervals() + 1)
+        inverse_perm = self.permutation().inverse()
+        for i in range(self.num_intervals()):
+            for j in range(self.num_intervals()):
+                if i < j and inverse_perm[i] > inverse_perm[j]:
+                    self._translation_matrix[i, j] = 1
+                if i > j and inverse_perm[i] < inverse_perm[j]:
+                    self._translation_matrix[i, j] = -1
+            self._translation_matrix[i, -1] = 1
+        self._translations = self._translation_matrix * vector(self._intex.lengths() + [self._twist])
 
     def __repr__(self):
         return "Oriented foliation on a genus {0} surface.\n".format(self.genus()) +\
@@ -77,7 +132,7 @@ class Foliation(SageObject):
     def rotation_data(self, k):
         normalized_k = _mod(k, self.num_intervals())
         rotating_dist = sum(self._intex.lengths()[self.num_intervals() - normalized_k:])
-        containing_interval = bisect(self._intex.range_singularities(), _mod(-rotating_dist- self._twist, 1)) 
+        containing_interval = bisect(self._intex.range_singularities(), _fmod(-rotating_dist- self._twist, 1)) 
         new_permutation = rotating_permutation(self.num_intervals(), containing_interval) *\
                 self.permutation() * \
                 rotating_permutation(self.num_intervals(), k)
@@ -100,6 +155,98 @@ class Foliation(SageObject):
         x = self.rotation_data(k)
         return self.new_foliation(x[0], x[1])
 
+
+    def first_intersection(self, left_endpoint, right_endpoint, index_of_singularity, upwards = True):
+        point = self._intex.domain_singularities()[index_of_singularity]
+        interval_intersection_count = [0] * self.num_intervals()
+        if upwards:
+            while True:
+                i = bisect(self._intex.domain_singularities(), point) - 1
+                point = _fmod(point + self._translations[i], 1.0)
+                interval_intersection_count[i] += 1
+                if is_between(left_endpoint, right_endpoint, point):
+                    break
+        else:
+            while not is_between(left_endpoint, right_endpoint, point):
+                i = bisect(self._intex.range_singularities(), _fmod(point - self._twist, 1.0)) - 1
+                domain_interval = self.permutation()[i] - 1
+                point = _fmod(point - self._translations[domain_interval], 1.0)
+                interval_intersection_count[domain_interval] -= 1
+        coefficients = vector([1] * index_of_singularity + [0] * (self.num_intervals() - index_of_singularity + 1))
+        coefficients += vector(interval_intersection_count) * self._translation_matrix
+        calculated_point = coefficients * vector(self._intex.lengths() + [self._twist])
+        coefficients -= floor(calculated_point) * vector([1] * self.num_intervals() + [0])
+        return PointWithCoordinates(point, coefficients) 
+
+    def restrict_data(self, singularity, wrapping):
+        if wrapping == 0:
+            raise ValueError, 'wrapping cannot be 0'
+        left_endpoint_coeff = vector([1] * singularity + [0] * (self.num_intervals() - singularity + 1))
+        right_endpoint_coeff = left_endpoint_coeff + self._translation_matrix[singularity]
+        left_endpoint = PointWithCoordinates(self._intex.domain_singularities()[singularity], left_endpoint_coeff)
+        right_endpoint = PointWithCoordinates(self._intex.range_singularities()[self.permutation().inverse()[singularity] - 1]\
+                + self._twist, right_endpoint_coeff)
+        if wrapping < 0:
+            left_endpoint, right_endpoint = right_endpoint, left_endpoint
+        if wrapping in [-1, 1]:
+            le, re = left_endpoint.point, right_endpoint.point
+        else:
+            le, re = -1, 1
+        upper_intersections = [self.first_intersection(le, re, i, False) \
+                for i in range(self.num_intervals())]
+        lower_intersections = [self.first_intersection(le, re, i, True) \
+                for i in range(self.num_intervals())]
+        upper_tuples = list(enumerate(upper_intersections))
+        if wrapping > 0:
+            sort_key = lambda x: -_fmod(left_endpoint.point - x[1].point, 1.0)
+        else:
+            sort_key = lambda x: -_fmod(right_endpoint.point - x[1].point, 1.0)
+        upper_tuples.sort(key = sort_key) 
+     
+        total_coordinates = right_endpoint.coordinates - left_endpoint.coordinates +\
+                vector([1] * self.num_intervals() + [0]) * (abs(wrapping) - 1)
+        if right_endpoint.point < left_endpoint.point:
+            total_coordinates += vector([1] * self.num_intervals() + [0]) 
+        total_length = total_coordinates * (vector(self._intex.lengths() + [self._twist]))
+        
+        transition_matrix = matrix(self.num_intervals() + 1)
+        for i in range(self.num_intervals() - 1):
+            transition_matrix[i] = (upper_tuples[i + 1][1] - upper_tuples[i][1]).coordinates
+        transition_matrix[self.num_intervals() - 1] = total_coordinates -\
+                (upper_tuples[-1][1] - upper_tuples[0][1]).coordinates
+        print upper_tuples
+
+        def distance_from_left_endpoint(point_with_coordinates, is_close_to_left):
+            if is_close_to_left:
+                diff = point_with_coordinates - left_endpoint
+                if diff.point == 0.0:
+                    return (1.0, vector([1] * self.num_intervals() + [0]))
+                else:
+                    return (diff.point, diff.coordinates)
+            else:
+                diff = right_endpoint - point_with_coordinates
+                return (total_length - diff.point, total_coordinates - diff.coordinates)
+
+        reference_point_distance = distance_from_left_endpoint(upper_tuples[0][1], wrapping > 0)
+        print reference_point_distance
+
+        lower_distances_from_left_endpoint = sorted(list(enumerate([distance_from_left_endpoint(x, wrapping < 0) 
+            for x in lower_intersections])), key = lambda x: x[1][0])
+        print lower_distances_from_left_endpoint
+
+        position = bisect([x[1][0] for x in lower_distances_from_left_endpoint], reference_point_distance[0])
+        print position
+
+        transition_matrix[-1] = lower_distances_from_left_endpoint[position % self.num_intervals()][1][1] -\
+            reference_point_distance[1]
+        if position == self.num_intervals():
+            transition_matrix[-1] += total_coordinates
+
+        perm = [next(k for k in range(self.num_intervals()) if upper_tuples[k][0] == \
+                lower_distances_from_left_endpoint[(position + i) % self.num_intervals()][0]) + 1
+                for i in range(self.num_intervals())]
+
+        return (transition_matrix, Permutation(perm))
 
 class FoliationNonOrientableSurface(SageObject):
     r"""
@@ -130,8 +277,11 @@ class FoliationNonOrientableSurface(SageObject):
                         self._intex.permutation().to_permutation(), self._intex.lengths())
 
     def num_intervals(self):
-        return self._intex.lengths().size()
+        return len(self._intex.lengths())
     
+    def permutation(self):
+        return self._intex.permutation().to_permutation()
+
     def to_foliation(self):
         return Foliation(self._intex.permutation().to_permutation(), self._intex.lengths(), 0.5)
 
@@ -142,18 +292,36 @@ class FoliationNonOrientableSurface(SageObject):
         return 2 - self.euler_char()
 
     def rotation_data(self, k):
-        p = Permutation([(i + k) % self.num_intervals() + 1 for i in range(self.num_intervals())])
-        m = p.to_matrix()
-        return 
+        new_permutation = rotating_permutation(self.num_intervals(), -k) *\
+                self.permutation() *\
+                rotating_permutation(self.num_intervals(), k)
+        index_of_interval = []
+        count = 0
+        for i in range(self.num_intervals()):
+            j = self.permutation()[i] - 1 
+            if j > i:
+                index_of_interval.append(count)
+                count += 1
+            else:
+                index_of_interval.append(index_of_interval[j])
+
+        m = matrix(self.num_intervals() / 2)
+        count = 0
+        for i in range(self.num_intervals()): 
+            if new_permutation[i] - 1 > i:
+                m[count, index_of_interval[(i - k) % self.num_intervals()]] = 1
+                count += 1
+
+        return (m, new_permutation)
 
 def _ay_entry(i,j,n):
     if (j - i) % n == n - 1 or j == n - 1:
-        return 1
+        return 1.0
     else:
-        return 0
+        return 0.0
 
 def arnoux_yoccoz_factor(genus):
-    m = matrix(genus, lambda i, j: _ay_entry(i, j, genus))
+    m = matrix(RDF, genus, lambda i, j: _ay_entry(i, j, genus))
     return max([abs(x) for x in m.eigenvalues()])
 
 def arnoux_yoccoz_foliation(genus):
@@ -168,7 +336,6 @@ def arnoux_yoccoz_foliation(genus):
     return FoliationNonOrientableSurface(p, lengths)
 
 f = arnoux_yoccoz_foliation(3).to_foliation()
-#f = Foliation(Permutation([2, 1, 4, 3, 6, 5]), [0.2718, 0.2718, 0.1478, 0.1478, 0.0803, 0.0803], 0.5)
 g = Foliation(Permutation([1]), [1], 0.2)
-
+h = arnoux_yoccoz_foliation(3)
 
