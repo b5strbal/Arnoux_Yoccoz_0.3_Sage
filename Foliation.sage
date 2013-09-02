@@ -242,11 +242,42 @@ class Foliation(SageObject):
         if position == self.num_intervals():
             transition_matrix[-1] += total_coordinates
 
-        perm = [next(k for k in range(self.num_intervals()) if upper_tuples[k][0] == \
-                lower_distances_from_left_endpoint[(position + i) % self.num_intervals()][0]) + 1
+        pairing = [0] * self.num_intervals()
+        for i in range(self.num_intervals()):
+            pairing[upper_tuples[i][0]] = i 
+        perm = [pairing[lower_distances_from_left_endpoint[(position + i) % self.num_intervals()][0]] + 1
                 for i in range(self.num_intervals())]
 
         return (transition_matrix, Permutation(perm))
+
+
+
+class PointWithCoordinatesNonOr(SageObject):
+    def __init__(self, point, coordinates):
+        self.point = point
+        self.coordinates = coordinates
+
+    def __repr__(self):
+        return repr((self.point, self.coordinates))
+
+    def __add__(self, other):
+        new_point = PointWithCoordinatesNonOr(self.point + other.point, 
+                self.coordinates + other.coordinates)
+        if new_point.point >= 1:
+            new_point.point -= 1
+            for i in range(len(self.coordinates)):
+                new_point.coordinates[i] -= 2
+        return new_point
+
+    def __sub__(self, other):
+        new_point = PointWithCoordinates(self.point - other.point, 
+                self.coordinates - other.coordinates)
+        if new_point.point < 0:
+            new_point.point += 1
+            for i in range(len(self.coordinates)):
+                new_point.coordinates[i] += 2
+        return new_point       
+
 
 class FoliationNonOrientableSurface(SageObject):
     r"""
@@ -260,16 +291,37 @@ class FoliationNonOrientableSurface(SageObject):
             raise ValueError, 'The permutation must be an involution.'
         if permutation.size() != 2 * len(lengths):
             raise ValueError, 'The list of lengths should be half as long as the size of the permutation'
+
+        count = 0
+        self._small_index = 2 * lengths
+        for x in range(2 * len(lengths)):
+            if permutation[x] - 1 > x:
+                self._small_index[x] = self._small_index[permutation[x] - 1] = count
+                count += 1
+        
         total = sum(lengths)
         self._lengths = [x/total/2 for x in lengths]
 
-        detailed_lengths = 2 * lengths
-        count = 0
-        for x in range(2 * len(lengths)):
-            if permutation[x] - 1 > x:
-                detailed_lengths[x] = detailed_lengths[permutation[x] - 1] = self._lengths[count]
-                count += 1
+        detailed_lengths = [self._lengths[self._small_index[i]] for i in range(2 * len(lengths))]
         self._intex = iet.IntervalExchangeTransformation(permutation, detailed_lengths)
+
+        self._divpoints = [PointWithCoordinatesNonOr(0.0, vector([0] * len(lengths)))]
+        from copy import deepcopy
+        for i in range(2 * len(lengths) - 1):
+            self._divpoints.append(deepcopy(self._divpoints[-1]))
+            self._divpoints[-1].point += detailed_lengths[i]
+            self._divpoints[-1].coordinates[self._small_index[i]] += 1
+
+        self._translation_matrix = matrix(2 * len(lengths), len(lengths))
+        inverse_perm = self.permutation().inverse()
+        for i in range(2 * len(lengths)):
+            for j in range(2 * len(lengths)):
+                if i < j and inverse_perm[i] > inverse_perm[j]:
+                    self._translation_matrix[i, self._small_index[j]] += 1
+                if i > j and inverse_perm[i] < inverse_perm[j]:
+                    self._translation_matrix[i, self._small_index[j]] += -1
+        self._translations = self._translation_matrix * vector(self._lengths)
+
 
     def __repr__(self):
         return 'Foliation with Z_2 holomony on a non-orientable surface of genus {0}.\n'\
@@ -313,6 +365,72 @@ class FoliationNonOrientableSurface(SageObject):
                 count += 1
 
         return (m, new_permutation)
+
+    
+    def first_intersection(self, left_endpoint, right_endpoint, index_of_singularity):
+        point = self._intex.domain_singularities()[index_of_singularity]
+        interval_intersection_count = [0] * self.num_intervals()
+        from_above = True
+        while not is_between(left_endpoint, right_endpoint, point):
+            point = _fmod(point + 0.5, 1.0)
+            if is_between(left_endpoint, right_endpoint, point):
+                from_above = False
+                break
+            domain_interval = self._intex.in_which_interval(point)- 1
+            point += self._translations[domain_interval]
+            interval_intersection_count[domain_interval] += 1
+
+        coefficients = self._divpoints[index_of_singularity].coordinates
+        coefficients += vector(interval_intersection_count) * self._translation_matrix
+        calculated_point = coefficients * vector(self._lengths)
+        coefficients -= floor((calculated_point - point) * 2 + 0.5) * vector([1] * (self.num_intervals() // 2))
+        #print calculated_point, point
+        calculated_point = coefficients * vector(self._lengths)
+        #print calculated_point
+        return (PointWithCoordinates(point, coefficients), from_above)
+
+    def restrict_data(self, singularity):
+        left_endpoint = self._divpoints[singularity]
+        right_endpoint = self._divpoints[self.permutation().inverse()[singularity] - 1]
+
+        intersections = [self.first_intersection(left_endpoint.point, right_endpoint.point, i)
+                for i in range(self.num_intervals())]
+
+        total = right_endpoint - left_endpoint
+
+        def distance_from_right_endpoint(point_with_coordinates, is_from_above):
+            diff = right_endpoint - point_with_coordinates
+            if is_from_above:
+                return diff 
+            else:
+                return PointWithCoordinatesNonOr(diff.point + total.point, 
+                        diff.coordinates + total.coordinates)
+
+        intersections = [(x, distance_from_right_endpoint(x[0], x[1]))
+                for x in intersections]
+
+        tuples = list(enumerate(intersections))
+        tuples.sort(key = lambda x: -x[1][1].point)
+     
+        print tuples
+
+        pairing = [0] * self.num_intervals()
+        for i in range(self.num_intervals()):
+            pairing[tuples[i][0]] = i 
+        new_permutation = Permutation([pairing[self.permutation()[tuples[i][0]] - 1] + 1
+                for i in range(self.num_intervals())])
+        
+        print new_permutation
+
+        transition_matrix = matrix(self.num_intervals() // 2)
+        count = 0
+        for i in range(self.num_intervals()):
+            if new_permutation[i] - 1 > i:
+                transition_matrix[count] = (tuples[i][1][1] - tuples[i + 1][1][1]).coordinates
+                count += 1
+
+        return (transition_matrix, new_permutation)
+
 
 def _ay_entry(i,j,n):
     if (j - i) % n == n - 1 or j == n - 1:
