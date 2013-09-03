@@ -53,6 +53,18 @@ def is_between(left_endpoint, right_endpoint, point):
         else:
             return False
 
+
+
+
+
+
+
+
+
+
+
+
+
 class PointWithCoordinates(SageObject):
     def __init__(self, point, coordinates):
         self.point = point
@@ -80,6 +92,21 @@ class PointWithCoordinates(SageObject):
         return new_point       
 
  
+def is_positive(vec):
+    if vec[0] == 0.0:
+        return False
+    is_first_positive = (vec[0] > 0)
+    for x in vec:
+        if x == 0.0 or (x > 0) != is_first_positive:
+            return False
+    return True
+        
+def get_pseudo_anosov_candidates(transition_matrix):
+    ev = transition_matrix.eigenvectors_right()
+    return [(ev[i][0], v) for i in range(len(ev)) for v in ev[i][1]\
+            if ev[i][0].imag() == 0.0 and ev[i][0] > 0 and abs(ev[i][0] - 1.0) > 0.000001 and\
+            is_positive(v)]
+
 
 
 class Foliation(SageObject):
@@ -151,10 +178,6 @@ class Foliation(SageObject):
         new_vector = transition_matrix * old_vector
         return Foliation(new_permutation, new_vector.list()[:-1], new_vector[-1])
 
-    def rotate(self, k):
-        x = self.rotation_data(k)
-        return self.new_foliation(x[0], x[1])
-
 
     def first_intersection(self, left_endpoint, right_endpoint, index_of_singularity, upwards = True):
         point = self._intex.domain_singularities()[index_of_singularity]
@@ -214,7 +237,6 @@ class Foliation(SageObject):
             transition_matrix[i] = (upper_tuples[i + 1][1] - upper_tuples[i][1]).coordinates
         transition_matrix[self.num_intervals() - 1] = total_coordinates -\
                 (upper_tuples[-1][1] - upper_tuples[0][1]).coordinates
-        print upper_tuples
 
         def distance_from_left_endpoint(point_with_coordinates, is_close_to_left):
             if is_close_to_left:
@@ -228,14 +250,11 @@ class Foliation(SageObject):
                 return (total_length - diff.point, total_coordinates - diff.coordinates)
 
         reference_point_distance = distance_from_left_endpoint(upper_tuples[0][1], wrapping > 0)
-        print reference_point_distance
 
         lower_distances_from_left_endpoint = sorted(list(enumerate([distance_from_left_endpoint(x, wrapping < 0) 
             for x in lower_intersections])), key = lambda x: x[1][0])
-        print lower_distances_from_left_endpoint
 
         position = bisect([x[1][0] for x in lower_distances_from_left_endpoint], reference_point_distance[0])
-        print position
 
         transition_matrix[-1] = lower_distances_from_left_endpoint[position % self.num_intervals()][1][1] -\
             reference_point_distance[1]
@@ -278,7 +297,6 @@ class PointWithCoordinatesNonOr(SageObject):
                 new_point.coordinates[i] += 2
         return new_point       
 
-
 class FoliationNonOrientableSurface(SageObject):
     r"""
     Normalized measured foliation with \mathbb{Z}_2 holonomy on a non-orientable surface.
@@ -305,12 +323,15 @@ class FoliationNonOrientableSurface(SageObject):
         detailed_lengths = [self._lengths[self._small_index[i]] for i in range(2 * len(lengths))]
         self._intex = iet.IntervalExchangeTransformation(permutation, detailed_lengths)
 
-        self._divpoints = [PointWithCoordinatesNonOr(0.0, vector([0] * len(lengths)))]
-        from copy import deepcopy
+        def get_next(prev, distance, index_to_increase):
+            new = PointWithCoordinatesNonOr(prev.point + distance, prev.coordinates + vector([0] * len(lengths)))
+            new.coordinates[index_to_increase] += 1
+            return new
+
+
+        self._divpoints = [PointWithCoordinatesNonOr(0.0, vector([0] * len(lengths)))] 
         for i in range(2 * len(lengths) - 1):
-            self._divpoints.append(deepcopy(self._divpoints[-1]))
-            self._divpoints[-1].point += detailed_lengths[i]
-            self._divpoints[-1].coordinates[self._small_index[i]] += 1
+            self._divpoints.append(get_next(self._divpoints[-1], detailed_lengths[i], self._small_index[i]))
 
         self._translation_matrix = matrix(2 * len(lengths), len(lengths))
         inverse_perm = self.permutation().inverse()
@@ -412,16 +433,12 @@ class FoliationNonOrientableSurface(SageObject):
         tuples = list(enumerate(intersections))
         tuples.sort(key = lambda x: -x[1][1].point)
      
-        print tuples
-
         pairing = [0] * self.num_intervals()
         for i in range(self.num_intervals()):
             pairing[tuples[i][0]] = i 
         new_permutation = Permutation([pairing[self.permutation()[tuples[i][0]] - 1] + 1
                 for i in range(self.num_intervals())])
         
-        print new_permutation
-
         transition_matrix = matrix(self.num_intervals() // 2)
         count = 0
         for i in range(self.num_intervals()):
@@ -431,6 +448,37 @@ class FoliationNonOrientableSurface(SageObject):
 
         return (transition_matrix, new_permutation)
 
+    def new_foliation(self, transition_matrix, new_permutation):
+        new_vector = transition_matrix * vector(self._lengths)
+        return FoliationNonOrientableSurface(new_permutation, new_vector.list())
+
+    def find_pseudo_anosovs(self, depth, transition_matrix_so_far = [], 
+            permutation_so_far = [], 
+            encoding_sequence_so_far = [],
+            initial_permutation = []): 
+        if transition_matrix_so_far == []:
+            transition_matrix_so_far = matrix.identity(self.num_intervals() // 2)
+            permutation_so_far = self.permutation()
+            initial_permutation = self.permutation()
+
+        if depth > 0:
+            pairs = [self.restrict_data(i) for i in range(self.num_intervals())]
+            return [pa for i in range(self.num_intervals()) for pa in self.new_foliation(pairs[i][0], \
+                    pairs[i][1]).find_pseudo_anosovs(depth - 1,\
+                    pairs[i][0] * transition_matrix_so_far,\
+                    pairs[i][1], encoding_sequence_so_far + [i], \
+                    initial_permutation)] 
+        else:
+            ret_list = []
+            for i in range(self.num_intervals()):
+                pair = self.rotation_data(i) 
+                final_encoding = encoding_sequence_so_far + [i]
+                final_foliation = self.new_foliation(pair[0], pair[1]) 
+                final_matrix = pair[0] * transition_matrix_so_far
+                final_permutation = pair[1]
+                if final_permutation == initial_permutation:
+                    ret_list.extend(get_pseudo_anosov_candidates(matrix(RDF, final_matrix)))
+            return ret_list
 
 def _ay_entry(i,j,n):
     if (j - i) % n == n - 1 or j == n - 1:
