@@ -2,19 +2,19 @@ from sage.structure.sage_object import SageObject
 from bisect import bisect
 from math import fmod
 
-def _mod(a, b):
+epsilon = 1e-10
+
+_global_storage = []
+
+def _integer_mod(a, b):
     x = a % b
     if x < 0:
         return x + b
     else:
         return x
 
-def _fmod(a, b):
-    x = fmod(a, b)
-    if x < 0:
-        return x + b
-    else:
-        return x
+def _mod_one(a):
+    return a - floor(a)
 
 
 def rotating_permutation(n, k):
@@ -31,11 +31,11 @@ def singularity_permutation(permutation):
 
 
 def _canonical_form(intex, twist):
-    one_minus_twist = _fmod(1 - twist, 1)
+    one_minus_twist = _mod_one(1 - twist)
     rotateby = bisect(intex.range_singularities(), one_minus_twist)
-    for i in [rotateby - 1, rotateby]:
-        if abs(one_minus_twist - intex.range_singularities()[i]) < 0.000000001:
-            raise ValueError, 'The foliation has a closed leaf. It should not.'
+    #for i in [rotateby - 1, rotateby]:
+    #    if abs(one_minus_twist - intex.range_singularities()[i]) < 0.000000001:
+    #        raise ValueError, 'The foliation has a closed leaf. It should not.'
     newtwist = intex.range_singularities()[rotateby] - one_minus_twist 
     n = len(intex.lengths())
     return (iet.IntervalExchangeTransformation(rotating_permutation(n, rotateby) *\
@@ -93,19 +93,35 @@ class PointWithCoordinates(SageObject):
 
  
 def is_positive(vec):
-    if vec[0] == 0.0:
+    if abs(vec[0]) < epsilon:
         return False
     is_first_positive = (vec[0] > 0)
     for x in vec:
-        if x == 0.0 or (x > 0) != is_first_positive:
+        if abs(x) < epsilon  or (x > 0) != is_first_positive:
             return False
     return True
         
-def get_pseudo_anosov_candidates(transition_matrix):
+def get_pseudo_anosov_candidates(transition_matrix, is_orientable):
+    global _global_storage
     ev = transition_matrix.eigenvectors_right()
-    return [(ev[i][0], v) for i in range(len(ev)) for v in ev[i][1]\
-            if ev[i][0].imag() == 0.0 and ev[i][0] > 0 and abs(ev[i][0] - 1.0) > 0.000001 and\
-            is_positive(v)]
+    ret_list = []
+    for x in ev:
+        if x[0].imag() == 0.0 and x[0] > 0 and abs(x[0] - 1.0) > epsilon:
+            for vec in x[1]:
+                if is_positive(vec):
+                    norm = sum([abs(y) for y in vec])
+                    if is_orientable:
+                        norm -= abs(vec[-1])
+                    else:
+                        norm *= 2
+                    normalized_vec = [abs(y / norm) for y in vec]
+                    ret_list.append((x[0], normalized_vec))
+                else:
+                    _global_storage.append(('no positive eigenvector:', vec))
+        else:
+            _global_storage.append(('no good eigenvalue:', x[0]))
+    return ret_list
+            
 
 
 
@@ -120,6 +136,13 @@ class Foliation(SageObject):
         ret = _canonical_form(intex, twist)
         self._intex = ret[0]
         self._twist = ret[1]
+
+        all_singularities = sorted(self._intex.domain_singularities() \
+                + [x + self._twist for x in self._intex.range_singularities()])
+        for i in range(2 * self.num_intervals()):
+            if abs(all_singularities[i + 1] - all_singularities[i]) < epsilon:
+                raise ValueError, ("The foliation and immediate saddle connection "
+                        "or one of the intervals of the exchange is very short.")
         self._singularity_cycles = singularity_permutation(self._intex.permutation().to_permutation()).to_cycles()
         self._translation_matrix = matrix(self.num_intervals(), self.num_intervals() + 1)
         inverse_perm = self.permutation().inverse()
@@ -157,15 +180,15 @@ class Foliation(SageObject):
         return self._intex.permutation().to_permutation()
 
     def rotation_data(self, k):
-        normalized_k = _mod(k, self.num_intervals())
+        normalized_k = _integer_mod(k, self.num_intervals())
         rotating_dist = sum(self._intex.lengths()[self.num_intervals() - normalized_k:])
-        containing_interval = bisect(self._intex.range_singularities(), _fmod(-rotating_dist- self._twist, 1)) 
+        containing_interval = bisect(self._intex.range_singularities(), _mod_one(-rotating_dist- self._twist)) 
         new_permutation = rotating_permutation(self.num_intervals(), containing_interval) *\
                 self.permutation() * \
                 rotating_permutation(self.num_intervals(), k)
         m = matrix(self.num_intervals() + 1)
         for i in range(self.num_intervals()):
-            m[i, _mod(i - k, self.num_intervals())] = 1
+            m[i, _integer_mod(i - k, self.num_intervals())] = 1
         for j in range(normalized_k):
             m[-1, self.num_intervals() - j - 1] += 1
         for j in range(self.num_intervals() - containing_interval):
@@ -185,15 +208,15 @@ class Foliation(SageObject):
         if upwards:
             while True:
                 i = bisect(self._intex.domain_singularities(), point) - 1
-                point = _fmod(point + self._translations[i], 1.0)
+                point = _mod_one(point + self._translations[i])
                 interval_intersection_count[i] += 1
                 if is_between(left_endpoint, right_endpoint, point):
                     break
         else:
             while not is_between(left_endpoint, right_endpoint, point):
-                i = bisect(self._intex.range_singularities(), _fmod(point - self._twist, 1.0)) - 1
+                i = bisect(self._intex.range_singularities(), _mod_one(point - self._twist)) - 1
                 domain_interval = self.permutation()[i] - 1
-                point = _fmod(point - self._translations[domain_interval], 1.0)
+                point = _mod_one(point - self._translations[domain_interval])
                 interval_intersection_count[domain_interval] -= 1
         coefficients = vector([1] * index_of_singularity + [0] * (self.num_intervals() - index_of_singularity + 1))
         coefficients += vector(interval_intersection_count) * self._translation_matrix
@@ -221,9 +244,9 @@ class Foliation(SageObject):
                 for i in range(self.num_intervals())]
         upper_tuples = list(enumerate(upper_intersections))
         if wrapping > 0:
-            sort_key = lambda x: -_fmod(left_endpoint.point - x[1].point, 1.0)
+            sort_key = lambda x: -_mod_one(left_endpoint.point - x[1].point)
         else:
-            sort_key = lambda x: -_fmod(right_endpoint.point - x[1].point, 1.0)
+            sort_key = lambda x: -_mod_one(right_endpoint.point - x[1].point)
         upper_tuples.sort(key = sort_key) 
      
         total_coordinates = right_endpoint.coordinates - left_endpoint.coordinates +\
@@ -302,9 +325,11 @@ class FoliationNonOrientableSurface(SageObject):
     Normalized measured foliation with \mathbb{Z}_2 holonomy on a non-orientable surface.
     """
 
+    random = _random_foliation_non_orientable_surface
+
     def __init__(self, permutation, lengths):
         if permutation.number_of_fixed_points() > 0:
-            raise ValueError, "The pormutation should not have fixed points."
+            raise ValueError, "The permutation should not have fixed points."
         if permutation.inverse() != permutation:
             raise ValueError, 'The permutation must be an involution.'
         if permutation.size() != 2 * len(lengths):
@@ -322,6 +347,7 @@ class FoliationNonOrientableSurface(SageObject):
 
         detailed_lengths = [self._lengths[self._small_index[i]] for i in range(2 * len(lengths))]
         self._intex = iet.IntervalExchangeTransformation(permutation, detailed_lengths)
+        self._lifted_foliation = self.to_foliation()
 
         def get_next(prev, distance, index_to_increase):
             new = PointWithCoordinatesNonOr(prev.point + distance, prev.coordinates + vector([0] * len(lengths)))
@@ -329,7 +355,7 @@ class FoliationNonOrientableSurface(SageObject):
             return new
 
 
-        self._divpoints = [PointWithCoordinatesNonOr(0.0, vector([0] * len(lengths)))] 
+        self._divpoints = [PointWithCoordinatesNonOr(0, vector([0] * len(lengths)))] 
         for i in range(2 * len(lengths) - 1):
             self._divpoints.append(get_next(self._divpoints[-1], detailed_lengths[i], self._small_index[i]))
 
@@ -342,6 +368,16 @@ class FoliationNonOrientableSurface(SageObject):
                 if i > j and inverse_perm[i] < inverse_perm[j]:
                     self._translation_matrix[i, self._small_index[j]] += -1
         self._translations = self._translation_matrix * vector(self._lengths)
+
+        self._index_of_interval = []
+        count = 0
+        for i in range(self.num_intervals()):
+            j = self.permutation()[i] - 1 
+            if j > i:
+                self._index_of_interval.append(count)
+                count += 1
+            else:
+                self._index_of_interval.append(self._index_of_interval[j])
 
 
     def __repr__(self):
@@ -364,42 +400,58 @@ class FoliationNonOrientableSurface(SageObject):
     def genus(self):
         return 2 - self.euler_char()
 
+    def singularity_type_prongs(self):
+        return [x/2 for x in self._lifted_foliation.singularity_type_prongs()]
+
     def rotation_data(self, k):
         new_permutation = rotating_permutation(self.num_intervals(), -k) *\
                 self.permutation() *\
                 rotating_permutation(self.num_intervals(), k)
-        index_of_interval = []
-        count = 0
-        for i in range(self.num_intervals()):
-            j = self.permutation()[i] - 1 
-            if j > i:
-                index_of_interval.append(count)
-                count += 1
-            else:
-                index_of_interval.append(index_of_interval[j])
-
         m = matrix(self.num_intervals() / 2)
         count = 0
         for i in range(self.num_intervals()): 
             if new_permutation[i] - 1 > i:
-                m[count, index_of_interval[(i - k) % self.num_intervals()]] = 1
+                m[count, self._index_of_interval[(i - k) % self.num_intervals()]] = 1
                 count += 1
 
         return (m, new_permutation)
+    
+    def reverse_data(self):
+        reversing_permutation = Permutation(range(self.num_intervals(), 0, -1))
+        new_permutation = reversing_permutation * self.permutation() * \
+                reversing_permutation
+        m = matrix(self.num_intervals() / 2)
+        count = 0
+        for i in range(self.num_intervals()): 
+            if new_permutation[i] - 1 > i:
+                m[count, self._index_of_interval[self.num_intervals() - 1 - i]] = 1
+                count += 1
 
+        return (m, new_permutation)
+    
+
+
+    def get_interval(self, point):
+        interval = self._intex.in_which_interval(point)- 1
+        if abs(point - self._intex.domain_singularities()[interval]) < epsilon or\
+                abs(point - self._intex.domain_singularities()[interval + 1]) < epsilon:
+                    raise ValueError, 'Saddle connection found.'
+        return interval
     
     def first_intersection(self, left_endpoint, right_endpoint, index_of_singularity):
         point = self._intex.domain_singularities()[index_of_singularity]
         interval_intersection_count = [0] * self.num_intervals()
         from_above = True
         while not is_between(left_endpoint, right_endpoint, point):
-            point = _fmod(point + 0.5, 1.0)
+            point = _mod_one(point + 1/2)
+           
             if is_between(left_endpoint, right_endpoint, point):
                 from_above = False
                 break
-            domain_interval = self._intex.in_which_interval(point)- 1
-            point += self._translations[domain_interval]
-            interval_intersection_count[domain_interval] += 1
+            interval = self.get_interval(point)
+            point += self._translations[interval]
+            interval_intersection_count[interval] += 1
+            self.get_interval(point)
 
         coefficients = self._divpoints[index_of_singularity].coordinates
         coefficients += vector(interval_intersection_count) * self._translation_matrix
@@ -416,7 +468,6 @@ class FoliationNonOrientableSurface(SageObject):
 
         intersections = [self.first_intersection(left_endpoint.point, right_endpoint.point, i)
                 for i in range(self.num_intervals())]
-
         total = right_endpoint - left_endpoint
 
         def distance_from_right_endpoint(point_with_coordinates, is_from_above):
@@ -452,7 +503,7 @@ class FoliationNonOrientableSurface(SageObject):
         new_vector = transition_matrix * vector(self._lengths)
         return FoliationNonOrientableSurface(new_permutation, new_vector.list())
 
-    def find_pseudo_anosovs(self, depth, transition_matrix_so_far = [], 
+    def find_pseudo_anosov_candidates(self, depth, transition_matrix_so_far = [], 
             permutation_so_far = [], 
             encoding_sequence_so_far = [],
             initial_permutation = []): 
@@ -460,25 +511,135 @@ class FoliationNonOrientableSurface(SageObject):
             transition_matrix_so_far = matrix.identity(self.num_intervals() // 2)
             permutation_so_far = self.permutation()
             initial_permutation = self.permutation()
+            _global_storage = []
+            
+        ret_list = []
+                
+        for i in range(self.num_intervals()):
+            for j in range(2):
+                if j == 0:
+                    pair = self.rotation_data(i) 
+                    final_encoding = encoding_sequence_so_far + [i, 'not reversed']
+                    final_foliation = self.new_foliation(pair[0], pair[1]) 
+                    final_matrix = pair[0] * transition_matrix_so_far
+                    final_permutation = pair[1]
+                else:
+                    pair = final_foliation.reverse_data()
+                    final_encoding = encoding_sequence_so_far + [i, 'reversed']
+                    final_matrix = pair[0] * final_matrix
+                    final_permutation = pair[1]
 
-        if depth > 0:
-            pairs = [self.restrict_data(i) for i in range(self.num_intervals())]
-            return [pa for i in range(self.num_intervals()) for pa in self.new_foliation(pairs[i][0], \
-                    pairs[i][1]).find_pseudo_anosovs(depth - 1,\
-                    pairs[i][0] * transition_matrix_so_far,\
-                    pairs[i][1], encoding_sequence_so_far + [i], \
-                    initial_permutation)] 
-        else:
-            ret_list = []
-            for i in range(self.num_intervals()):
-                pair = self.rotation_data(i) 
-                final_encoding = encoding_sequence_so_far + [i]
-                final_foliation = self.new_foliation(pair[0], pair[1]) 
-                final_matrix = pair[0] * transition_matrix_so_far
-                final_permutation = pair[1]
                 if final_permutation == initial_permutation:
-                    ret_list.extend(get_pseudo_anosov_candidates(matrix(RDF, final_matrix)))
-            return ret_list
+                    ret_list.extend([(x, final_encoding)
+                        for x in get_pseudo_anosov_candidates(matrix(RDF, final_matrix), False)])
+                else:
+                    global _global_storage
+                    _global_storage.append('not matching permutation')
+            
+        if depth > 0:
+            for i in range(self.num_intervals()):
+                try:
+                    pair = self.restrict_data(i)
+                    ret_list += [pa for pa in self.new_foliation(pair[0], \
+                        pair[1]).find_pseudo_anosov_candidates(depth - 1,\
+                        pair[0] * transition_matrix_so_far,\
+                        pair[1], encoding_sequence_so_far + [i], \
+                        initial_permutation)] 
+                except ValueError:
+                    pass
+            
+        return ret_list
+
+    def verify_candidate(self, pseudo_anosov_candidate, exact_check = False):
+        try:
+            new_fol = foliation = FoliationNonOrientableSurface(self.permutation(),\
+                    pseudo_anosov_candidate[0][1])
+        except ValueError:
+            #print 'Candidate with immediate saddle connection:', pseudo_anosov_candidate
+            return False
+
+        try:
+            transition_matrix = matrix.identity(self.num_intervals() // 2)
+            for i in range(len(pseudo_anosov_candidate[1]) - 1):
+                if i == len(pseudo_anosov_candidate[1]) - 2:
+                    pair = new_fol.rotation_data(pseudo_anosov_candidate[1][i])
+                else:
+                    pair = new_fol.restrict_data(pseudo_anosov_candidate[1][i])
+                transition_matrix = pair[0] * transition_matrix
+                new_fol = new_fol.new_foliation(pair[0], pair[1])
+            if pseudo_anosov_candidate[1][-1] == 'reversed':
+                pair = new_fol.reverse_data()    
+                transition_matrix = pair[0] * transition_matrix
+                new_fol = new_fol.new_foliation(pair[0], pair[1])
+        except ValueError:
+            #print 'Candidate with non-immediate saddle connection:', new_fol, pseudo_anosov_candidate
+            return False
+
+        ret_list = []
+
+        if pseudo_anosov_candidate[0][0] in QQbar:
+            for cand in get_pseudo_anosov_candidates(matrix(QQ, transition_matrix), False):
+                if pseudo_anosov_candidate[0] == cand:
+                    #print transition_matrix.eigenvalues()
+                    #print transition_matrix.charpoly()
+                    #print pseudo_anosov_candidate
+                    return True
+        elif pseudo_anosov_candidate[0][0] in CDF:
+            for cand in get_pseudo_anosov_candidates(matrix(RDF, transition_matrix), False):
+                if pseudo_anosov_candidate[0] == cand:
+                    if not exact_check:
+                        return True
+                    qqbar_candidates = get_pseudo_anosov_candidates(matrix(QQ, transition_matrix), False)
+                    for x in qqbar_candidates:
+                        if abs(x[0] - cand[0]) < epsilon and sum([abs(x[1][k] - cand[1][k]) for k in range(len(x[1]))]) < epsilon:
+                            #print pseudo_anosov_candidate
+                            return self.verify_candidate((x, pseudo_anosov_candidate[1]))
+                else:
+                    return False
+        else:
+            raise ValueError, 'Unexpected number field'
+    
+    def find_pseudo_anosovs(self, depth):
+        return [cand for cand in self.find_pseudo_anosov_candidates(depth) if self.verify_candidate(cand)]
+
+def _is_involution_good(involution):
+    half_size = involution.size() // 2
+    i = 0
+    while i < half_size:
+        for j in range(half_size):
+            if i < involution[i + j] - 1 < i + half_size: 
+                i = i + j + 1
+                break
+        else:
+            return False
+    return True
+
+def _random_involution(num_intervals):
+    import random
+    if num_intervals % 2 != 0:
+        raise ValueError, 'The number of intervals must be even.'
+    if num_intervals < 6:
+        raise ValueError, ('The involution corresponding to a foliation without saddle connection '
+    'must act on at least 6 intervals.')
+    if num_intervals == 6:
+        return Permutation([2, 1, 4, 3, 6, 5])
+    mix = range(num_intervals)
+    perm_list = [0] * num_intervals
+    while True:
+        random.shuffle(mix)
+        for i in range(num_intervals // 2):
+            perm_list[mix[2 * i]] = mix[2 * i + 1] + 1
+            perm_list[mix[2 * i + 1]] = mix[2 * i] + 1
+        perm = Permutation(perm_list)
+        if _is_involution_good(perm):
+            return perm
+
+def random_foliation_non_orientable_surface(num_intervals, permutation = 'random'):
+    import random
+    if permutation == 'random':
+        permutation = _random_involution(num_intervals)
+    lengths = [random.random() for i in range(num_intervals // 2)]
+    return FoliationNonOrientableSurface(permutation, lengths)
 
 def _ay_entry(i,j,n):
     if (j - i) % n == n - 1 or j == n - 1:
@@ -490,13 +651,16 @@ def arnoux_yoccoz_factor(genus):
     m = matrix(RDF, genus, lambda i, j: _ay_entry(i, j, genus))
     return max([abs(x) for x in m.eigenvalues()])
 
-def arnoux_yoccoz_foliation(genus):
+def arnoux_yoccoz_permutation(genus):
     l = []
     for i in range(genus):
         l.append(2 * i + 2)
         l.append(2 * i + 1)
 
-    p = Permutation(l)
+    return Permutation(l)
+
+def arnoux_yoccoz_foliation(genus):
+    p = arnoux_yoccoz_permutation(genus)
     sf = arnoux_yoccoz_factor(genus)
     lengths = [1/sf**i for i in range(genus)]
     return FoliationNonOrientableSurface(p, lengths)
@@ -504,4 +668,7 @@ def arnoux_yoccoz_foliation(genus):
 f = arnoux_yoccoz_foliation(3).to_foliation()
 g = Foliation(Permutation([1]), [1], 0.2)
 h = arnoux_yoccoz_foliation(3)
-
+hh = FoliationNonOrientableSurface(arnoux_yoccoz_permutation(3), [0.261016378495, 0.1766049821, 0.0623786394048])
+hhh = FoliationNonOrientableSurface(arnoux_yoccoz_permutation(3), [0.262714, 0.155554, 0.0817322]) 
+h8 = FoliationNonOrientableSurface(Permutation([3,5,1,6,2,4,8,7]),[0.0944422795324, 0.178500974036, 0.074245928173, 0.152810818258])
+h8_2 = FoliationNonOrientableSurface(Permutation([3,5,1,6,2,4,8,7]), [0.0820003383086, 0.194387134927, 0.065494592731, 0.158117934033])    
