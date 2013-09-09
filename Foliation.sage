@@ -1,6 +1,6 @@
 from sage.structure.sage_object import SageObject
 from bisect import bisect
-from math import fmod
+from collections import namedtuple
 
 epsilon = 1e-10
 
@@ -22,6 +22,16 @@ def rotating_permutation(n, k):
 
 def rotating_matrix(n, k):
     return rotating_permutation(n, k).to_matrix()
+
+def is_minimal(permutation):
+    n = permutation.size()
+    if n < 3:
+        return True
+    for i in range(n):
+        if permutation[(i + 1) % n] - permutation[i] in [1, 1 - n]:
+            return False
+    return True
+
 
 def singularity_permutation(permutation):
     p = permutation
@@ -130,6 +140,8 @@ class Foliation(SageObject):
     Oriented projective measured foliation on an orientable surface
     """
     def __init__(self, permutation, lengths, twist):
+        if not is_minimal(permutation):
+            raise ValueError, 'The same interval exchange can be specified on less intervals.'
         intex = iet.IntervalExchangeTransformation(permutation, lengths)
         normalized_twist = twist / intex.length()
         intex = intex.normalize()
@@ -320,12 +332,34 @@ class PointWithCoordinatesNonOr(SageObject):
                 new_point.coordinates[i] += 2
         return new_point       
 
+def _random_involution(num_intervals):
+    import random
+    if num_intervals % 2 != 0:
+        raise ValueError, 'The number of intervals must be even.'
+    if num_intervals < 6:
+        raise ValueError, ('The involution corresponding to a foliation without saddle connection '
+    'must act on at least 6 intervals.')
+    if num_intervals == 6:
+        return Permutation([2, 1, 4, 3, 6, 5])
+    mix = range(num_intervals)
+    perm_list = [0] * num_intervals
+    while True:
+        random.shuffle(mix)
+        for i in range(num_intervals // 2):
+            perm_list[mix[2 * i]] = mix[2 * i + 1] + 1
+            perm_list[mix[2 * i + 1]] = mix[2 * i] + 1
+        perm = Permutation(perm_list)
+        if _is_involution_good(perm) and is_minimal(perm):
+            return perm
+
+
+
+
+
 class FoliationNonOrientableSurface(SageObject):
     r"""
     Normalized measured foliation with \mathbb{Z}_2 holonomy on a non-orientable surface.
     """
-
-    random = _random_foliation_non_orientable_surface
 
     def __init__(self, permutation, lengths):
         if permutation.number_of_fixed_points() > 0:
@@ -379,6 +413,14 @@ class FoliationNonOrientableSurface(SageObject):
             else:
                 self._index_of_interval.append(self._index_of_interval[j])
 
+    @classmethod
+    def random(cls, num_intervals, permutation = None):
+        import random
+        if permutation == None:
+            permutation = _random_involution(num_intervals)
+        lengths = [random.random() for i in range(num_intervals // 2)]
+        return FoliationNonOrientableSurface(permutation, lengths)
+
 
     def __repr__(self):
         return 'Foliation with Z_2 holomony on a non-orientable surface of genus {0}.\n'\
@@ -392,7 +434,7 @@ class FoliationNonOrientableSurface(SageObject):
         return self._intex.permutation().to_permutation()
 
     def to_foliation(self):
-        return Foliation(self._intex.permutation().to_permutation(), self._intex.lengths(), 0.5)
+        return Foliation(self._intex.permutation().to_permutation(), self._intex.lengths(), 1/2)
 
     def euler_char(self):
         return self.to_foliation().euler_char() / 2
@@ -401,7 +443,10 @@ class FoliationNonOrientableSurface(SageObject):
         return 2 - self.euler_char()
 
     def singularity_type_prongs(self):
-        return [x/2 for x in self._lifted_foliation.singularity_type_prongs()]
+        prongs_of_lift = self._lifted_foliation.singularity_type_prongs()
+        return [prongs_of_lift[i] for i in range(len(prongs_of_lift)) if i % 2 == 0] 
+
+    TransitionData = namedtuple('TransitionData', 'tr_matrix, new_perm')
 
     def rotation_data(self, k):
         new_permutation = rotating_permutation(self.num_intervals(), -k) *\
@@ -414,7 +459,7 @@ class FoliationNonOrientableSurface(SageObject):
                 m[count, self._index_of_interval[(i - k) % self.num_intervals()]] = 1
                 count += 1
 
-        return (m, new_permutation)
+        return self.TransitionData(tr_matrix = m, new_perm = new_permutation)
     
     def reverse_data(self):
         reversing_permutation = Permutation(range(self.num_intervals(), 0, -1))
@@ -427,7 +472,7 @@ class FoliationNonOrientableSurface(SageObject):
                 m[count, self._index_of_interval[self.num_intervals() - 1 - i]] = 1
                 count += 1
 
-        return (m, new_permutation)
+        return self.TransitionData(tr_matrix = m, new_perm = new_permutation)
     
 
 
@@ -490,18 +535,18 @@ class FoliationNonOrientableSurface(SageObject):
         new_permutation = Permutation([pairing[self.permutation()[tuples[i][0]] - 1] + 1
                 for i in range(self.num_intervals())])
         
-        transition_matrix = matrix(self.num_intervals() // 2)
+        m = matrix(self.num_intervals() // 2)
         count = 0
         for i in range(self.num_intervals()):
             if new_permutation[i] - 1 > i:
-                transition_matrix[count] = (tuples[i][1][1] - tuples[i + 1][1][1]).coordinates
+                m[count] = (tuples[i][1][1] - tuples[i + 1][1][1]).coordinates
                 count += 1
 
-        return (transition_matrix, new_permutation)
+        return self.TransitionData(tr_matrix = m, new_perm = new_permutation)
 
-    def new_foliation(self, transition_matrix, new_permutation):
-        new_vector = transition_matrix * vector(self._lengths)
-        return FoliationNonOrientableSurface(new_permutation, new_vector.list())
+    def new_foliation(self, transition_data):
+        new_vector = transition_data.tr_matrix * vector(self._lengths)
+        return FoliationNonOrientableSurface(transition_data.new_perm, new_vector.list())
 
     def find_pseudo_anosov_candidates(self, depth, transition_matrix_so_far = [], 
             permutation_so_far = [], 
@@ -518,16 +563,16 @@ class FoliationNonOrientableSurface(SageObject):
         for i in range(self.num_intervals()):
             for j in range(2):
                 if j == 0:
-                    pair = self.rotation_data(i) 
+                    tr_data = self.rotation_data(i) 
                     final_encoding = encoding_sequence_so_far + [i, 'not reversed']
-                    final_foliation = self.new_foliation(pair[0], pair[1]) 
-                    final_matrix = pair[0] * transition_matrix_so_far
-                    final_permutation = pair[1]
+                    final_foliation = self.new_foliation(tr_data) 
+                    final_matrix = tr_data.tr_matrix * transition_matrix_so_far
+                    final_permutation = tr_data.new_perm 
                 else:
-                    pair = final_foliation.reverse_data()
+                    tr_data = final_foliation.reverse_data()
                     final_encoding = encoding_sequence_so_far + [i, 'reversed']
-                    final_matrix = pair[0] * final_matrix
-                    final_permutation = pair[1]
+                    final_matrix = tr_data.tr_matrix * final_matrix
+                    final_permutation = tr_data.new_perm
 
                 if final_permutation == initial_permutation:
                     ret_list.extend([(x, final_encoding)
@@ -539,11 +584,11 @@ class FoliationNonOrientableSurface(SageObject):
         if depth > 0:
             for i in range(self.num_intervals()):
                 try:
-                    pair = self.restrict_data(i)
-                    ret_list += [pa for pa in self.new_foliation(pair[0], \
-                        pair[1]).find_pseudo_anosov_candidates(depth - 1,\
-                        pair[0] * transition_matrix_so_far,\
-                        pair[1], encoding_sequence_so_far + [i], \
+                    tr_data = self.restrict_data(i)
+                    ret_list += [pa for pa in self.new_foliation(tr_data).\
+                            find_pseudo_anosov_candidates(depth - 1,\
+                        tr_data.tr_matrix * transition_matrix_so_far,\
+                        tr_data.new_perm, encoding_sequence_so_far + [i], \
                         initial_permutation)] 
                 except ValueError:
                     pass
@@ -562,15 +607,15 @@ class FoliationNonOrientableSurface(SageObject):
             transition_matrix = matrix.identity(self.num_intervals() // 2)
             for i in range(len(pseudo_anosov_candidate[1]) - 1):
                 if i == len(pseudo_anosov_candidate[1]) - 2:
-                    pair = new_fol.rotation_data(pseudo_anosov_candidate[1][i])
+                    tr_data = new_fol.rotation_data(pseudo_anosov_candidate[1][i])
                 else:
-                    pair = new_fol.restrict_data(pseudo_anosov_candidate[1][i])
-                transition_matrix = pair[0] * transition_matrix
-                new_fol = new_fol.new_foliation(pair[0], pair[1])
+                    tr_data = new_fol.restrict_data(pseudo_anosov_candidate[1][i])
+                transition_matrix = tr_data.tr_matrix * transition_matrix
+                new_fol = new_fol.new_foliation(tr_data)
             if pseudo_anosov_candidate[1][-1] == 'reversed':
-                pair = new_fol.reverse_data()    
-                transition_matrix = pair[0] * transition_matrix
-                new_fol = new_fol.new_foliation(pair[0], pair[1])
+                tr_data = new_fol.reverse_data()    
+                transition_matrix = tr_data.tr_matrix * transition_matrix
+                new_fol = new_fol.new_foliation(tr_data)
         except ValueError:
             #print 'Candidate with non-immediate saddle connection:', new_fol, pseudo_anosov_candidate
             return False
@@ -588,6 +633,8 @@ class FoliationNonOrientableSurface(SageObject):
             for cand in get_pseudo_anosov_candidates(matrix(RDF, transition_matrix), False):
                 if pseudo_anosov_candidate[0] == cand:
                     if not exact_check:
+                        print matrix(RDF, transition_matrix).eigenvalues()
+                        print transition_matrix.charpoly()
                         return True
                     qqbar_candidates = get_pseudo_anosov_candidates(matrix(QQ, transition_matrix), False)
                     for x in qqbar_candidates:
@@ -614,42 +661,21 @@ def _is_involution_good(involution):
             return False
     return True
 
-def _random_involution(num_intervals):
-    import random
-    if num_intervals % 2 != 0:
-        raise ValueError, 'The number of intervals must be even.'
-    if num_intervals < 6:
-        raise ValueError, ('The involution corresponding to a foliation without saddle connection '
-    'must act on at least 6 intervals.')
-    if num_intervals == 6:
-        return Permutation([2, 1, 4, 3, 6, 5])
-    mix = range(num_intervals)
-    perm_list = [0] * num_intervals
-    while True:
-        random.shuffle(mix)
-        for i in range(num_intervals // 2):
-            perm_list[mix[2 * i]] = mix[2 * i + 1] + 1
-            perm_list[mix[2 * i + 1]] = mix[2 * i] + 1
-        perm = Permutation(perm_list)
-        if _is_involution_good(perm):
-            return perm
+#def matrix_with_charpoly(polynomial):
+#    m = matrix(polynomial.degree())
+#    coeffs = polynomial.coeffs()
+#    for i in range(m.nrows() - 1):
+#        m[i, i + 1] = 1
+#    for i in range(m.nrows()):
+#        m[-1, i] =  -coeffs[i] / coeffs[-1]
+#    return m
 
-def random_foliation_non_orientable_surface(num_intervals, permutation = 'random'):
-    import random
-    if permutation == 'random':
-        permutation = _random_involution(num_intervals)
-    lengths = [random.random() for i in range(num_intervals // 2)]
-    return FoliationNonOrientableSurface(permutation, lengths)
+def arnoux_yoccoz_factor(genus, field = CDF):
+    R.<x> = ZZ[]
+    poly = R([-1] * genus + [1])
+    return max([abs(x[0]) for x in poly.roots(CDF)])
 
-def _ay_entry(i,j,n):
-    if (j - i) % n == n - 1 or j == n - 1:
-        return 1.0
-    else:
-        return 0.0
 
-def arnoux_yoccoz_factor(genus):
-    m = matrix(RDF, genus, lambda i, j: _ay_entry(i, j, genus))
-    return max([abs(x) for x in m.eigenvalues()])
 
 def arnoux_yoccoz_permutation(genus):
     l = []
@@ -659,9 +685,9 @@ def arnoux_yoccoz_permutation(genus):
 
     return Permutation(l)
 
-def arnoux_yoccoz_foliation(genus):
+def arnoux_yoccoz_foliation(genus, field = CDF):
     p = arnoux_yoccoz_permutation(genus)
-    sf = arnoux_yoccoz_factor(genus)
+    sf = arnoux_yoccoz_factor(genus, field)
     lengths = [1/sf**i for i in range(genus)]
     return FoliationNonOrientableSurface(p, lengths)
 
