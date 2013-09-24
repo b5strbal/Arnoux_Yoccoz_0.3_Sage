@@ -633,8 +633,8 @@ class FoliationNonOrientableSurface(SageObject):
             for cand in get_pseudo_anosov_candidates(matrix(RDF, transition_matrix), False):
                 if pseudo_anosov_candidate[0] == cand:
                     if not exact_check:
-                        print matrix(RDF, transition_matrix).eigenvalues()
-                        print transition_matrix.charpoly()
+                        #print matrix(RDF, transition_matrix).eigenvalues()
+                        #print transition_matrix.charpoly()
                         return True
                     qqbar_candidates = get_pseudo_anosov_candidates(matrix(QQ, transition_matrix), False)
                     for x in qqbar_candidates:
