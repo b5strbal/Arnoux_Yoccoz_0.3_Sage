@@ -1,108 +1,1077 @@
-from sage.structure.sage_object import SageObject
-from bisect import bisect
+from collections import deque
+
+
+class Involution(SageObject):
+    """
+    A wrapper for different kinds of Generalized Permutations.
+
+    Foliation objects are based on Involutions which are 
+    basically the same as GeneralizedPermutations already 
+    in sage. Involution objects have a few extra methods.
+   
+    INPUT:
+
+    - ``top_letters`` - a string where interval names are
+      separated by spaces, or a list is interval names
+    - ``bottom_letters`` - a string where interval names are
+      separated by spaces, or a list is interval names
+
+    - ``flips`` - a list or set of flipped interval names, or
+      a string containing flipped letters in case the names 
+      are single characters
+
+    EXAMPLES:
+
+    The top and bottom intervals can be specified as strings,
+    the letters (or numbers or words) separated by spaces. The
+    flips can be a string in containing the letters of flipped
+    intervals::
+
+        sage: Involution('a b c', 'c b a', flips = 'ab')
+        -a -b  c
+         c -b -a
+
+    If the names of intervals are not single characters, this
+    flips notation doesn't work::
+
+        sage: Involution('1 2 33', '33 2 1', flips = '33')
+        Traceback (most recent call last):
+        ...
+        TypeError: The flip list is not valid
+
+    In this case the flipped intervals must be presented in
+    a list or set so that element testing works::
+
+        sage: Involution('1 2 33', '33 2 1', flips = ['33'])
+         1  2 -33
+        -33  2  1
+        
+    The top and bottom intervals can also be listed in a list::
+
+        sage: Involution(['a','b','c'],['c','b','a'], 'ab')
+        -a -b  c
+         c -b -a
+
+    If the second argument is omitted, the bottom side of the
+    curve is considered as a Moebius band without punctures::
+
+        sage: Involution('a a b b c c', flips = 'abc')
+        -a -a -b -b -c -c
+        Moebius band
+        sage: _.singularity_type()
+        (3, 1, 1, 1)
+
+    It is only be omitting the bottom letters that one gets
+    a Moebius band without punctures. The following results in
+    a once punctured Moebius band on the bottom::
+
+        sage: Involution('a a b b c c', 'd d', flips = 'abc')
+        -a -a -b -b -c -c
+         d  d
+        sage: _.singularity_type()
+        (3, 2, 1, 1, 1)
+
+    If both arguments are omitted, then the trivial permutation
+    is constructed whose suspension is a torus without
+    punctures::
+
+        sage: Involution()
+        Torus
+        sage: _.singularity_type()
+        ()
+
+    Again, this is the only way of specifying an unpunctured
+    torus. The following constructs a once-punctured torus::
+
+        sage: Involution('a', 'a')
+        a
+        a
+        sage: _.singularity_type()
+        (2,)
+
+    And here is a twice-punctured torus::
+
+        sage: Involution('a b', 'a b')
+        a b 
+        a b
+        sage: _.singularity_type()
+        (2, 2)
+
+    """
+    def __init__(self, top_letters = None, 
+            bottom_letters = None, 
+            flips = []):
+        if top_letters == None: # torus
+            top_letters = bottom_letters = 'JOKER'
+        if bottom_letters == None: # bottom side is Moebius
+            bottom_letters = 'JOKER JOKER'
+        self._gen_perm = iet.GeneralizedPermutation(\
+                top_letters, bottom_letters, flips = flips)
+
+        # initializing self._pair
+        self._pair = {}
+        for i in range(2):
+            for j in range(len(self[i])):
+                for a in range(2):
+                    for b in range(len(self[a])):
+                        if (i != a or j != b) and \
+                                self[i][j] == self[a][b]:
+                                    self._pair[(i,j)] = (a,b)
+
+        # initializing self._index
+        self._index = {}
+        count = 0
+        done = set()
+        for (i, j) in sorted(self._pair.keys()):
+            letter = self[i][j]
+            if letter in done:
+                continue
+            done.add(letter)
+            self._index[letter] = count
+            count += 1
+
+        # initializing self._singularity_partition
+        done = set()
+        partition = []
+        for (i, j) in self._pair:
+            if (i, j) in done:
+                continue
+            (a, b) = (i, j)
+            partition.append([])
+            direction = 'left'
+            while True:
+                if direction == 'left':
+                    (a, b) = self._pair[(a, (b - 1) % 
+                        len(self[a]))]
+                    if not self.is_flipped((a, b)):
+                        b = (b + 1) % len(self[a])
+                        direction = 'away'
+                else:
+                    (a, b) = self._pair[(a,b)]
+                    if not self.is_flipped((a, b)):
+                        direction = 'left'
+                    else:
+                        b = (b + 1) % len(self[a])
+                partition[-1].append((a, b))
+                done.add((a, b))
+                if (a, b) == (i, j):
+                    break
+        self._singularity_partition = partition
+
+
+    def __repr__(self):
+        """
+        Returns a representation of self.
+
+        EXAMPLES:
+
+        Usually it is the same as the representation of a
+        GeneralizedPermutation::
+
+            sage: Involution('a a b b', 'c c', flips = 'ab')
+            -a -a -b -b
+             c  c
+
+        It's different when the bottom side is a Moebius band::
+
+            sage: Involution('a a b b', flips ='ab')
+            -a -a -b -b
+            Moebius band
+
+        Or when the suspension is a torus::
+
+            sage: Involution()
+            Torus
+
+        """
+        if self.is_torus():
+            return 'Torus'
+        if self.is_bottom_side_moebius():
+            return repr(self._gen_perm).split('\n')[0] + \
+                    '\nMoebius band'
+        return repr(self._gen_perm)
+
+    def __getitem__(self, index):
+        """
+        Returns the list of top of bottom letters.
+
+        INPUT:
+
+        - ``index`` - 0 for the top letters, 1 for the bottom
+
+        EXAMPLES::
+
+            sage: i = Involution('a a b b','c c',flips = 'b');i
+            a a -b -b
+            c c
+            sage: i[0]
+            ['a', 'a', 'b', 'b']
+            sage: i[1]
+            ['c', 'c']
+
+        """
+        return self._gen_perm.list()[index]
+
+    def __eq__(self, other):
+        """
+        Decides if two Involutions are the same up to renaming
+        letters.
+
+        EXAMPLES::
+            
+            sage: i = Involution('a a b b', 'c c')
+            sage: j = Involution('1 1 2 2', '3 3')
+            sage: k = Involution('a a b b', 'c c', flips = 'c')
+            sage: l = Involution('a a b b')
+            sage: i == j
+            True
+            sage: i == k
+            False
+            sage: i == l
+            False
+        """ 
+        if self.is_torus():
+            return other.is_torus()
+        if self.is_bottom_side_moebius() !=\
+                other.is_bottom_side_moebius():
+                    return False
+        return self._gen_perm == other._gen_perm
+
+    def alphabet(self):
+        """
+        Returns the set of interval names.
+
+        OUTPUT:
+
+        set -- the set of interval names
+
+        EXAMPLES::
+
+            sage: i = Involution('a a b b','c c',flips='c')
+            sage: i.alphabet() == {'a', 'b', 'c'}
+            True
+
+            sage: i = Involution()
+            sage: i.alphabet()
+            set([])
+        """
+        s = set(self._gen_perm.alphabet())
+        s.discard('JOKER')
+        return s
+
+    def flips(self):
+        """
+        Returns the list of flips.
+
+        OUTPUT:
+
+        - list -- the list of flipped interval names
+
+        EXMAPLES::
+
+            sage: i = Involution('a a b b','c c',flips = 'ab')
+            sage: i.flips()
+            ['a', 'b']
+
+            sage: i = Involution('a a', flips = 'a')
+            sage: i.flips()
+            ['a']
+
+            sage: i = Involution()
+            sage: i.flips()
+            []
+
+        """
+        if isinstance(self._gen_perm[0][0], tuple):
+            # self._gen_perm is a FlippedLabelledPermutationLI
+            # that has a flips() method
+            return self._gen_perm.flips()
+        else: #self._gen_perm is a LabelledPermutationIET 
+            # hence there are no flips
+            return []
+
+    def is_flipped(self, pos):
+        """
+        Decides if the interval at a certain position is 
+        flipped.
+
+        INPUT:
+
+        - ``pos`` - a tuple encoding the position. The first
+          coordinate is 0 or 1 depending on whether it is a top
+          or bottom interval. The second coordinate is the
+          index of the interval in that row.
+
+        OUTPUT:
+
+        - boolean -- True is the interval is flipped, False
+          is not
+
+        EXAMPLES::
+
+            sage: i = Involution('a a b b','c c', flips='bc');i
+            a a -b -b
+            -c -c
+            sage: i.is_flipped((0,0))
+            False
+            sage: i.is_flipped((0,1))
+            False
+            sage: i.is_flipped((0,2))
+            True
+            sage: i.is_flipped((0,3))
+            True
+            sage: i.is_flipped((1,0))
+            True
+            sage: i.is_flipped((1,1))
+            True
+
+        """
+        x = self._gen_perm[pos[0]][pos[1]]
+        if isinstance(x, tuple):
+            # self._gen_perm is a FlippedLabelledPermutationLI
+            return x[1] == -1
+        #self._gen_perm is a LabelledPermutationIET 
+        return False
+
+    def index(self, letter):
+        """
+        Returns the index of an letter.
+
+        If n letters are used to notate the involution, they
+        are indexed from 0 to n-1 according to their first 
+        occurrence when read from to to bottom, from left to
+        right.
+
+        INPUT:
+
+        - ``letter`` - string
+
+        OUTPUT:
+
+        - integer - the index of the letter
+
+        EXAMPLES::
+
+            sage: i = Involution('a b a c','d c d b')
+            sage: i.index('a')
+            0
+            sage: i.index('b')
+            1
+            sage: i.index('c')
+            2
+            sage: i.index('d')
+            3
+
+        """
+        return self._index[letter]
+
+    def pair(self, pos):
+        """
+        Returns the position of the pair of the interval at
+        a specified position.
+
+        INPUT:
+
+        - ``pos`` - a tuple encoding the position. The first
+          coordinate is 0 or 1 depending on whether it is a top
+          or bottom interval. The second coordinate is the
+          index of the interval in that row.
+
+        OUTPUT:
+
+        - tuple -- the position of the pair
+
+        EXAMPLES::
+
+            sage: i = Involution('a b a b','c c', flips = 'ab')
+            sage: i.pair((0,0))
+            (0, 2)
+            sage: i.pair((0,2))
+            (0, 0)
+            sage: i.pair((1,1))
+            (1, 0)
+
+        """
+        return self._pair[pos]
+
+    @classmethod
+    def orientable_arnoux_yoccoz(self, genus):
+        """
+        Returns the Involution of the Arnoux-Yoccoz foliations
+        on orientable surfaces.
+
+        INPUT:
+
+        - ``genus`` - the genus of the surface
+
+        OUTPUT:
+
+        - Involution
+
+        EXAMPLES::
+
+            sage: Involution.orientable_arnoux_yoccoz(3)
+            1 2 3 4 5 6
+            2 1 4 3 6 5
+            sage: Involution.orientable_arnoux_yoccoz(4)
+            1 2 3 4 5 6 7 8
+            2 1 4 3 6 5 8 7
+
+        """
+        if genus < 3:
+            raise ValueError('The genus of an orientable'
+                    'Arnoux-Yoccoz surface is at least 3')
+        n = 2 * genus
+        top = range(1, n + 1)
+        def switch(k):
+            if k % 2 == 0:
+                return k + 1
+            return k - 1
+        bottom = [top[switch(i)] for i in range(n)]
+        return Involution(top, bottom)
+
+    @classmethod
+    def nonorientable_arnoux_yoccoz(self, genus):
+        """
+        Returns the Involution of the Arnoux-Yoccoz foliations
+        on non-orientable surfaces.
+
+        Take care with the the genus here: 
+        The orienting double cover of a closed genus 
+        $g$ non-orientable surface is the closed genus $g-1$
+        orientable surface.
+        
+        INPUT:
+
+        - ``genus`` - the non-orientable genus of the surface
+
+        OUTPUT:
+
+        - Involution -
+
+        EXAMPLES::
+
+            sage: Involution.nonorientable_arnoux_yoccoz(4)
+            1 1 2 2 3 3
+            Moebius band
+            sage: Involution.nonorientable_arnoux_yoccoz(5)
+            1 1 2 2 3 3 4 4
+            Moebius band
+
+        """
+        if genus < 4:
+            raise ValueError('The genus of a non-orientable '
+                    'Arnoux-Yoccoz surface is at least 4')
+        top = sorted(2 * range(1, genus))
+        return Involution(top)
+
+    @classmethod
+    def RP2_arnoux_yoccoz(self):
+        """
+        Returns the Involution of the Arnoux-Yoccoz foliation
+        on the projective plane.
+
+        OUTPUT:
+
+        - Involution -
+
+        EXAMPLES::
+
+            sage: Involution.RP2_arnoux_yoccoz()
+            -a -a -b -b -c -c
+            Moebius band
+
+        """
+        return Involution('a a b b c c', flips = 'abc')
+
+    def _top_deque(self):
+        """
+        Returns the list of top letters as a deque.
+
+        OUTPUT:
+
+        - deque -- the deque of top letters
+
+        TESTS::
+
+            sage: i = Involution('a a b b','c c', flips='ab')
+            sage: i._top_deque()
+            deque(['a', 'a', 'b', 'b'])
+
+            sage: i = Involution('a a b b','c c')
+            sage: i._top_deque()
+            deque(['a', 'a', 'b', 'b'])
+        """
+        return deque(self._gen_perm.list()[0])
+
+    def _bottom_deque(self):
+        """
+        Returns the list of bottom letters as a deque.
+
+        OUTPUT:
+
+        - deque -- the deque of bottom letters
+
+        TESTS::
+
+            sage: i = Involution('a a b b','c c', flips='ab')
+            sage: i._bottom_deque()
+            deque(['c', 'c'])
+
+            sage: i = Involution('a a b b','c c')
+            sage: i._bottom_deque()
+            deque(['c', 'c'])
+
+        """
+        return deque(self._gen_perm.list()[1])
+
+    def rotated(self, top, bottom):
+        """
+        Returns an involution where the top and bottom rows
+        are rotated cyclically.
+
+        INPUT:
+
+        - ``top`` - an integer, shift the top letters
+          cyclically by this amount
+
+        - ``bottom`` - an integer, shift the bottom letters
+          cyclically by this amount
+
+        OUTPUT:
+
+        - Involution - the rotated Involution
+
+        EXAMPLES::
+
+            sage: i = Involution('a b c b','c a d d', \
+                    flips='bc');i
+            a -b -c -b
+            -c a d d
+            sage: i.rotated(1, 1)
+            -b a -b -c
+            d -c a d
+            sage: i.rotated(-6, 2)
+            -c -b a -b
+            d d -c a
+            
+        """
+        top_list = self._top_deque() 
+        bottom_list = self._bottom_deque() 
+        top_list.rotate(top)
+        bottom_list.rotate(bottom)
+        return Involution(list(top_list), list(bottom_list),
+                self.flips())
+
+
+    def reversed(self):
+        """
+        Returns an involution where the top and bottom rows
+        are reversed.
+
+        OUTPUT:
+
+        - Involution - the reversed Involution
+
+        EXAMPLES::
+
+            sage: i = Involution('a b c b','c a d d', \
+                    flips='bc');i
+            a -b -c -b
+            -c a d d
+            sage: i.reversed()
+            -b -c -b a
+            d d a -c
+
+        """
+        top_list = self._top_deque() 
+        bottom_list = self._bottom_deque() 
+        top_list.reverse()
+        bottom_list.reverse()
+        return Involution(list(top_list), list(bottom_list),
+                self.flips())
+        
+    def singularity_type(self):
+        """
+        Returns the singularity type of self.
+
+        The suspension of the Involution yields a foliation.
+        The singularity type of that foliation is the tuple of
+        the number of prongs at singularities.
+
+        OUTPUT:
+
+        - tuple -
+
+        EXAMPLES::
+
+        sage: Involution('a a b b c c', flips = 'abc')
+        -a -a -b -b -c -c
+        Moebius band
+        sage: _.singularity_type()
+        (3, 1, 1, 1)
+
+        sage: Involution('a a b b c c', 'd d', flips = 'abc')
+        -a -a -b -b -c -c
+         d  d
+        sage: _.singularity_type()
+        (3, 2, 1, 1, 1)
+
+        sage: Involution()
+        Torus
+        sage: _.singularity_type()
+        ()
+
+        sage: Involution('a', 'a')
+        a
+        a
+        sage: _.singularity_type()
+        (2,)
+
+        sage: Involution('a b', 'a b')
+        a b 
+        a b
+        sage: _.singularity_type()
+        (2, 2)
+
+        """
+        if self.is_torus():
+            return ()
+        t = sorted([x for x in map(len, 
+            self._singularity_partition)], reverse = True)
+        if self.is_bottom_side_moebius():
+            t.remove(2)
+        return tuple(t)
+
+    def is_torus(self):
+        """
+        Decides if the suspension of self is a torus without
+        punctures.
+
+        OUTPUT:
+
+        - boolean
+
+        EXAMPLES:
+
+        This is the only way to get a torus::
+
+            sage: i = Involution()
+            sage: i.is_torus()
+            True
+
+        Even tori with punctures return False::
+
+            sage: i = Involution('a', 'a')
+            sage: i.is_torus()
+            False
+
+        """
+        return self[0] == ['JOKER']
+
+    def is_bottom_side_moebius(self):
+        """
+        Decides if the bottom side is Moebius band without
+        punctures.
+
+        This happends exactly when the second argument in
+        the constructor is omitted.
+
+        OUTPUT:
+
+        - boolean
+
+        EXAMPLES::
+
+            sage: i = Involution('a a b b')
+            sage: i.is_bottom_side_moebius()
+            True
+
+        Here the bottom component is a once punctured Moebius
+        band, so it returns False::
+
+            sage: i = Involution('a a b b', 'c c')
+            sage: i.is_torus()
+            False
+
+        """
+        return self[1] == ['JOKER', 'JOKER']
+
+    def is_surface_orientable(self):
+        """
+        Decides if the suspension surface is orientable.
+
+        OUTPUT:
+
+        - boolean -- 
+
+        EXAMPLES:
+
+        If the bottom side is a Moebius band, it is always
+        non-orientable::
+
+            sage: i = Involution('a a b b')
+            sage: i.is_surface_orientable()
+            False
+
+        Or if there is flipped pair on different sides::
+
+            sage: i = Involution('a b c','c b a', flips = 'a')
+            sage: i.is_surface_orientable()
+            False
+
+        Or if there is not flipped pair on the same side::
+
+            sage: i = Involution('a a b b', 'c c', flips='ac')
+            sage: i.is_surface_orientable()
+            False
+
+        Otherwise it is orientable::
+
+            sage: i = Involution('a b c', 'b c a')
+            sage: i.is_surface_orientable()
+            True
+
+        """ 
+        for x in self._pair:
+            a = (x[0] == self._pair[x][0])
+            b = self.is_flipped(x)
+            if a != b:
+                return False
+        return True
+
+    def is_foliation_orientable(self):
+        """
+        Decides if the suspension foliations are orientable.
+
+        OUTPUT:
+
+        - boolean --
+
+        EXAMPLES:
+
+        If there are flipped intervals, the foliation is 
+        non-orientable::
+
+            sage: i = Involution('a a b b', 'c c', flips ='a')
+            sage: i.is_foliation_orientable()
+            False
+
+        If there are no flips, the foliation is orientable::
+
+            sage: i = Involution('a a b b', 'c c')
+            sage: i.is_foliation_orientable()
+            True
+
+        """
+        return len(self.flips()) == 0
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#from involution import Involution
+from bisect import bisect_left, bisect
 from collections import namedtuple
 
 epsilon = 1e-10
 
-_global_storage = []
+class PointWithCoefficients(SageObject):
+    """
+    Represents a real number together with its coefficients
+    as a linear combination of the a certain set of real numbers.
 
-def _integer_mod(a, b):
-    x = a % b
-    if x < 0:
-        return x + b
-    else:
-        return x
+    In practice this set is the set of interval lengths and possibly
+    the twist of a Foliation.
 
-def _mod_one(a):
-    return a - floor(a)
+    This class works in two modes. In one case there is no twist (when
+    the bottom side of the Foliation is an unpunctured Moebius band), in the
+    other case there is a twist. The twist coefficient has to be treated
+    somewhat differently from the other cofficients.
 
+    Note that only the value of the real number and the coefficients are 
+    stored in the objects, the generator set is not.
 
-def rotating_permutation(n, k):
-    return Permutation([(i + k) % n + 1 for i in range(n)])
+    INPUT:
 
-def rotating_matrix(n, k):
-    return rotating_permutation(n, k).to_matrix()
+    - ``value`` - a real number (can be floating point, or an exact 
+      algebraic number)
 
-def is_minimal(permutation):
-    n = permutation.size()
-    if n < 3:
-        return True
-    for i in range(n):
-        if permutation[(i + 1) % n] - permutation[i] in [1, 1 - n]:
-            return False
-    return True
+    - ``coefficients`` - a list or tuple or vector of the coefficients
 
+    - ``one_sided`` - boolean, False by default. If set to False, the last
+      element of the coefficient vector is considered to be the twist. If
+      True, there is no twist coefficient.
 
-def singularity_permutation(permutation):
-    p = permutation
-    p_inv = p.inverse()
-    n = p.size()
-    return Permutation([p_inv[p[(i - 1) % n] % n] for i in range(n)])
+    EXAMPLES:
 
+    The coefficients can be specified as a list, tuple or vector::
 
-def _canonical_form(intex, twist):
-    one_minus_twist = _mod_one(1 - twist)
-    rotateby = bisect(intex.range_singularities(), one_minus_twist)
-    #for i in [rotateby - 1, rotateby]:
-    #    if abs(one_minus_twist - intex.range_singularities()[i]) < 0.000000001:
-    #        raise ValueError, 'The foliation has a closed leaf. It should not.'
-    newtwist = intex.range_singularities()[rotateby] - one_minus_twist 
-    n = len(intex.lengths())
-    return (iet.IntervalExchangeTransformation(rotating_permutation(n, rotateby) *\
-            intex.permutation().to_permutation(), intex.lengths()), newtwist)
+        sage: a = PointWithCoefficients(1.2, (3, -1, 0))
+        sage: b = PointWithCoefficients(0.8, [2, 1, 5])
+        sage: c = PointWithCoefficients(-1, vector([0, 3, 2]),\
+                one_sided = True)
+        sage: d = PointWithCoefficients(3.4, (2, 3))
+        sage: e = PointWithCoefficients(8, (1, 1, 1), one_sided = True)
 
-def is_between(left_endpoint, right_endpoint, point):
-    if left_endpoint < right_endpoint:
-        if point <= left_endpoint or point > right_endpoint:
-            return False
-        else:
-            return True
-    else:
-        if point <= right_endpoint or point > left_endpoint:
-            return True
-        else:
-            return False
+    One can add or subtract two objects as long as they are of the same type:
 
+        sage: a + b
+        (2.00000000000000, (5, 0, 5))
+        sage: a - b
+        (0.400000000000000, (1, -2, -5))
+        sage: c + e
+        (7, (1, 4, 3))
+        sage: c - e
+        (-9, (-1, 2, 1))
+        sage: a + c
+        Traceback (most recent call last):
+        ...
+        TypeError: Cannot add a point with a twist coefficient and a point without twist coefficient
+        sage: a - d
+        Traceback (most recent call last):
+        ...
+        TypeError: Cannot subtract two PointWithCoefficients of different types
+    
 
 
-
-
-
-
-
-
-
-
-
-
-class PointWithCoordinates(SageObject):
-    def __init__(self, point, coordinates):
-        self.point = point
-        self.coordinates = coordinates
+    """
+    def __init__(self, value, coefficients, one_sided = False):
+        self.value = value
+        self.coefficients = vector(coefficients)
+        self._one_sided = one_sided
 
     def __repr__(self):
-        return repr((self.point, self.coordinates))
+        """
+        Returns the representation of self.
+
+        TESTS::
+
+            sage: PointWithCoefficients(3, (4, 3, 2))
+            (3, (4, 3, 2))
+            sage: PointWithCoefficients(sqrt(2), (2, -2), one_sided = True)
+            (sqrt(2), (2, -2))
+
+        """
+        return repr((self.value, self.coefficients))
 
     def __add__(self, other):
-        new_point = PointWithCoordinates(self.point + other.point, 
-                self.coordinates + other.coordinates)
-        if new_point.point >= 1:
-            new_point.point -= 1
-            for i in range(len(self.coordinates) - 1):
-                new_point.coordinates[i] -= 1
-        return new_point
+        """
+        Adds the numbers are their coefficient vectors.
 
+        OUTPUT:
+
+        - PointWithCoefficients - the sum
+
+        TESTS::
+
+        sage: a = PointWithCoefficients(1.2, (3, -1, 0))
+        sage: b = PointWithCoefficients(0.8, (2, 1, 5))
+        sage: c = PointWithCoefficients(-1, (0, 3, 2), one_sided = True)
+        sage: d = PointWithCoefficients(3.4, (2, 3))
+        sage: e = PointWithCoefficients(8, (1, 1, 1), one_sided = True)
+
+        sage: a + b
+        (2.00000000000000, (5, 0, 5))
+
+        sage: c + e
+        (7, (1, 4, 3))
+
+        sage: a + c
+        Traceback (most recent call last):
+        ...
+        TypeError: Cannot add a point with a twist coefficient and a point without twist coefficient
+
+        sage: a + d
+        Traceback (most recent call last):
+        ...
+        TypeError: Cannot add two PointWithCoefficients of different types
+
+        """
+        if self._one_sided != other._one_sided:
+            raise TypeError("Cannot add a point with a twist coefficient"
+                    " and a point without twist coefficient")
+        try:
+            return PointWithCoefficients(self.value + other.value,
+                    self.coefficients + other.coefficients,
+                    one_sided = self._one_sided)
+        except TypeError:
+            raise TypeError("Cannot add two PointWithCoefficients of "
+                    "different types")
+        
     def __sub__(self, other):
-        new_point = PointWithCoordinates(self.point - other.point, 
-                self.coordinates - other.coordinates)
-        if new_point.point < 0:
-            new_point.point += 1
-            for i in range(len(self.coordinates) - 1):
-                new_point.coordinates[i] += 1
-        return new_point       
+        """
+        Adds the numbers are their coefficient vectors.
 
- 
-def is_positive(vec):
+        OUTPUT:
+
+        - PointWithCoefficients - the sum
+
+        TESTS::
+
+        sage: a = PointWithCoefficients(1.2, (3, -1, 0))
+        sage: b = PointWithCoefficients(0.8, [2, 1, 5])
+        sage: c = PointWithCoefficients(-1, vector([0, 3, 2]),\
+                one_sided = True)
+        sage: d = PointWithCoefficients(3.4, (2, 3))
+        sage: e = PointWithCoefficients(8, (1, 1, 1), one_sided = True)
+
+        sage: a - b
+        (0.400000000000000, (1, -2, -5))
+        sage: c - e
+        (-9, (-1, 2, 1))
+        sage: a - c
+        Traceback (most recent call last):
+        ...
+        TypeError: Cannot subtract a point with a twist coefficient and a point without twist coefficient
+        sage: a - d
+        Traceback (most recent call last):
+        ...
+        TypeError: Cannot subtract two PointWithCoefficients of different types
+
+        """
+        if self._one_sided != other._one_sided:
+            raise TypeError("Cannot subtract a point with "
+                    "a twist coefficient and a point "
+                    "without twist coefficient")
+        try:
+            return PointWithCoefficients(self.value - other.value,
+                    self.coefficients - other.coefficients,
+                    one_sided = self._one_sided)
+        except TypeError:
+            raise TypeError("Cannot subtract two "
+                    "PointWithCoefficients of different types")
+
+    def mod_one(self):
+        """
+        Returns the PointWithCoefficients corresponding to the
+        real number of self modulo 1.
+
+        If there is a twist coefficient, i.e. if the bottom
+        side of the foliation is not a Moebius band, then the
+        sum of the numbers in the generating set used for
+        linear combinations is 1 hence all but the twist
+        coefficient is decreased by the floor of the real
+        number of self.
+
+        If there is no twist coefficients, then the sum of the
+        generating numbers is 1/2, so all coefficients are
+        descreased by twice the floor of the real number of
+        self.
+
+        OUTPUT:
+
+        - PointWithCoefficients --
+
+        EXAMPLES::
+
+            sage: p = PointWithCoefficients(3.2, (4, 5, 3))
+            sage: p.mod_one()
+            (0.200000000000000, (1, 2, 3))
+
+            sage: q = PointWithCoefficients(-1.3, (0, 2, 4,-2))
+            sage: q.mod_one()
+            (0.700000000000000, (2, 4, 6, -2))
+
+            sage: r = PointWithCoefficients(3.3, (-1, 2, 1),\
+                    one_sided = True)
+            sage: r.mod_one()
+            (0.300000000000000, (-7, -4, -5))
+
+        """
+        if self.value == 0: #need to check beacuse of a bug
+            # with algebraic numbers
+            n = 0
+        else:
+            n = floor(self.value)
+        if self._one_sided:
+            return PointWithCoefficients(self.value - n, 
+                    [x - 2 * n for x in self.coefficients], 
+                one_sided = self._one_sided)
+
+        return PointWithCoefficients(self.value - n, [x - n 
+            for x in self.coefficients[:-1]] + \
+                    [self.coefficients[-1]],
+                    one_sided = self._one_sided)
+
+    def half_added(self):
+        assert(self._one_sided)
+        return (self + PointWithCoefficients(1/2,
+            [1] * (len(self.coefficients)),
+            one_sided = True)).mod_one()
+
+def arnoux_yoccoz_factor(genus, field = RDF):
+    R.<x> = ZZ[]
+    poly = R([-1] * genus + [1])
+    return max([abs(x[0]) for x in poly.roots(field)])
+
+class Interval(object):
+    def __init__(self, left_endpoint, right_endpoint,
+            is_closed_on_left = True, is_closed_on_right = False):
+        self._lep = left_endpoint
+        self._rep = right_endpoint
+        self._is_closed_on_left = is_closed_on_left
+        self._is_closed_on_right = is_closed_on_right
+
+    @staticmethod
+    def _less(x, y, is_equality_allowed):
+        if is_equality_allowed:
+            return x <= y
+        else:
+            return x < y
+
+    def __repr__(self):
+        s = ''
+        if self._is_closed_on_left:
+            s += '['
+        else:
+            s += '('
+        s += str(self._lep) + ',' + str(self._rep)
+        if self._is_closed_on_right:
+            s += ']'
+        else:
+            s += ')'
+        return s
+
+    def __getitem__(self, index):
+        if index == 0:
+            return self._lep
+        if index == 1:
+            return self._rep
+
+    def length(self):
+        return (self._rep - self._lep).mod_one()
+
+    def contains(self, point):
+        if self._lep.value <= self._rep.value:
+            if self._less(self._lep.value, point.value, 
+                    self._is_closed_on_left) and\
+                    self._less(point.value, self._rep.value, 
+                            self._is_closed_on_right):
+                return True
+            else:
+                return False
+        if self._less(self._rep.value, point.value, 
+                not self._is_closed_on_right) and\
+                self._less(point.value, self._lep.value, 
+                        not self._is_closed_on_left):
+            return False
+        else:
+            return True
+
+
+def has_constant_sign(vec):
     if abs(vec[0]) < epsilon:
         return False
     is_first_positive = (vec[0] > 0)
@@ -110,591 +1079,803 @@ def is_positive(vec):
         if abs(x) < epsilon  or (x > 0) != is_first_positive:
             return False
     return True
-        
-def get_pseudo_anosov_candidates(transition_matrix, is_orientable):
-    global _global_storage
+
+def get_good_eigendata(transition_matrix, is_twisted):
     ev = transition_matrix.eigenvectors_right()
     ret_list = []
     for x in ev:
-        if x[0].imag() == 0.0 and x[0] > 0 and abs(x[0] - 1.0) > epsilon:
+        if abs(x[0].imag()) < epsilon and x[0] > 0 \
+                and abs(x[0] - 1) > epsilon:
             for vec in x[1]:
-                if is_positive(vec):
+                if has_constant_sign(vec):
                     norm = sum([abs(y) for y in vec])
-                    if is_orientable:
+                    if not is_twisted:
                         norm -= abs(vec[-1])
-                    else:
-                        norm *= 2
                     normalized_vec = [abs(y / norm) for y in vec]
                     ret_list.append((x[0], normalized_vec))
-                else:
-                    _global_storage.append(('no positive eigenvector:', vec))
-        else:
-            _global_storage.append(('no good eigenvalue:', x[0]))
     return ret_list
-            
+class SaddleConnectionError(Exception):
+    pass
 
+class RestrictionError(Exception):
+    def __init__(self, value):
+        self.value = value
+
+    def __str__(self):
+        return self.value
 
 
 class Foliation(SageObject):
-    r"""
-    Oriented projective measured foliation on an orientable surface
-    """
-    def __init__(self, permutation, lengths, twist):
-        if not is_minimal(permutation):
-            raise ValueError, 'The same interval exchange can be specified on less intervals.'
-        intex = iet.IntervalExchangeTransformation(permutation, lengths)
-        normalized_twist = twist / intex.length()
-        intex = intex.normalize()
-        ret = _canonical_form(intex, twist)
-        self._intex = ret[0]
-        self._twist = ret[1]
+    def __init__(self, involution, lengths, twist = None):
+        if involution.is_bottom_side_moebius():
+            #if twist != None:
+            #    raise ValueError('When one side is a Moebius band, '
+            #            'the twist is irrelevant.')
+            #twist = 0
+            pass
+        #    self._alphabet.remove(involution[1][0])
+        else:
+            if twist == None:
+                raise ValueError('The twist must be specified '
+                        'unless one side is a Moebius band. ')
 
-        all_singularities = sorted(self._intex.domain_singularities() \
-                + [x + self._twist for x in self._intex.range_singularities()])
-        for i in range(2 * self.num_intervals()):
-            if abs(all_singularities[i + 1] - all_singularities[i]) < epsilon:
-                raise ValueError, ("The foliation and immediate saddle connection "
-                        "or one of the intervals of the exchange is very short.")
-        self._singularity_cycles = singularity_permutation(self._intex.permutation().to_permutation()).to_cycles()
-        self._translation_matrix = matrix(self.num_intervals(), self.num_intervals() + 1)
-        inverse_perm = self.permutation().inverse()
-        for i in range(self.num_intervals()):
-            for j in range(self.num_intervals()):
-                if i < j and inverse_perm[i] > inverse_perm[j]:
-                    self._translation_matrix[i, j] = 1
-                if i > j and inverse_perm[i] < inverse_perm[j]:
-                    self._translation_matrix[i, j] = -1
-            self._translation_matrix[i, -1] = 1
-        self._translations = self._translation_matrix * vector(self._intex.lengths() + [self._twist])
+        if isinstance(lengths, list):
+            if len(lengths) != len(involution.alphabet()):
+                    raise ValueError('Bad number of lengths')
+            lcopy = {letter: lengths[involution.index(letter)] 
+                    for letter in involution.alphabet()}
+                        
+        if isinstance(lengths, dict):
+            if set(involution.alphabet()) != set(lengths.keys()):
+                raise ValueError('Invalid length specification')
+            lcopy = dict(lengths)
 
-    def __repr__(self):
-        return "Oriented foliation on a genus {0} surface.\n".format(self.genus()) +\
-            "Permutation: {0}\n".format(self.permutation()) +\
-            "Lengths: {0}\n".format(self._intex.lengths()) +\
-            "Twist: {0}".format(self._twist)
+        if any(v <=0 for v in lcopy.values()):
+            raise ValueError('Lengths must be positive')
 
-    def euler_char(self):
-        return -sum([len(x) - 1 for x in self._singularity_cycles])
+        if involution.is_bottom_side_moebius():
+            totals = [sum(lcopy[involution[0][j]] for j in\
+                range(len(involution[0])))]
+            totals.append(totals[0])
+            self._num_coeffs = len(lcopy)
+        else:
+            totals = [sum(lcopy[involution[i][j]] for j in\
+                    range(len(involution[i]))) for i in range(2)]
 
-    def singularity_type_of_Abelian_diff(self):
-        return sorted([len(x) - 1 for x in self._singularity_cycles if len(x) > 1])
-
-    def singularity_type_prongs(self):
-        return [(x + 1) * 2 for x in self.singularity_type_of_Abelian_diff()]
-
-    def genus(self):
-        return (2 - self.euler_char()) / 2
-     
-    def num_intervals(self):
-        return len(self._intex.lengths())
-
-    def permutation(self):
-        return self._intex.permutation().to_permutation()
-
-    def rotation_data(self, k):
-        normalized_k = _integer_mod(k, self.num_intervals())
-        rotating_dist = sum(self._intex.lengths()[self.num_intervals() - normalized_k:])
-        containing_interval = bisect(self._intex.range_singularities(), _mod_one(-rotating_dist- self._twist)) 
-        new_permutation = rotating_permutation(self.num_intervals(), containing_interval) *\
-                self.permutation() * \
-                rotating_permutation(self.num_intervals(), k)
-        m = matrix(self.num_intervals() + 1)
-        for i in range(self.num_intervals()):
-            m[i, _integer_mod(i - k, self.num_intervals())] = 1
-        for j in range(normalized_k):
-            m[-1, self.num_intervals() - j - 1] += 1
-        for j in range(self.num_intervals() - containing_interval):
-            m[-1, self.permutation()[self.num_intervals() - j - 1] - 1] -= 1
-        m[-1, -1] = 1
-        return (m, new_permutation)
-        
-    def new_foliation(self, transition_matrix, new_permutation):
-        old_vector = vector(self._intex.lengths() + [self._twist])
-        new_vector = transition_matrix * old_vector
-        return Foliation(new_permutation, new_vector.list()[:-1], new_vector[-1])
-
-
-    def first_intersection(self, left_endpoint, right_endpoint, index_of_singularity, upwards = True):
-        point = self._intex.domain_singularities()[index_of_singularity]
-        interval_intersection_count = [0] * self.num_intervals()
-        if upwards:
-            while True:
-                i = bisect(self._intex.domain_singularities(), point) - 1
-                point = _mod_one(point + self._translations[i])
-                interval_intersection_count[i] += 1
-                if is_between(left_endpoint, right_endpoint, point):
+            if abs(totals[0] - totals[1]) > epsilon:
+                raise ValueError('The total length on the top and '
+                        'bottom are inconsistent.')
+            
+            #adjusting lengths in case they 
+            #differ slightly on top/bottom
+            for j in range(len(involution[0])):
+                if involution.pair((0, j))[0] == 0:
+                    lcopy[involution[i][j]] += \
+                            (totals[1] - totals[0])/2
                     break
+            self._num_coeffs = len(lcopy) + 1
+
+        self._lengths = {}
+        for letter in lcopy:
+            self._lengths[letter] = PointWithCoefficients(\
+                    lcopy[letter]/totals[1], 
+                    self._basis_vector(self._num_coeffs,
+                        involution.index(letter)),
+                    one_sided = involution.is_bottom_side_moebius())
+
+
+        self._divpoints = [[PointWithCoefficients(0,
+            [0] * self._num_coeffs, 
+            one_sided = involution.is_bottom_side_moebius())] 
+            for i in range(2)] 
+
+        for i in range(2):
+            if i == 1 and involution.is_bottom_side_moebius():
+                self._divpoints[1] = []
+                break
+            for j in range(len(involution[i]) - 1):
+                self._divpoints[i].append(self._divpoints[i][-1] +
+                        self._lengths[involution[i][j]])
+
+        self._divvalues = [[x.value for x in self._divpoints[i]] 
+            for i in range(2)]
+
+        if involution.is_bottom_side_moebius():
+            #self._twist = PointWithCoefficients(0, 
+            #        [0] * self._num_coeffs, one_sided = True)
+            self._involution = involution
         else:
-            while not is_between(left_endpoint, right_endpoint, point):
-                i = bisect(self._intex.range_singularities(), _mod_one(point - self._twist)) - 1
-                domain_interval = self.permutation()[i] - 1
-                point = _mod_one(point - self._translations[domain_interval])
-                interval_intersection_count[domain_interval] -= 1
-        coefficients = vector([1] * index_of_singularity + [0] * (self.num_intervals() - index_of_singularity + 1))
-        coefficients += vector(interval_intersection_count) * self._translation_matrix
-        calculated_point = coefficients * vector(self._intex.lengths() + [self._twist])
-        coefficients -= floor(calculated_point) * vector([1] * self.num_intervals() + [0])
-        return PointWithCoordinates(point, coefficients) 
+            preimage_of_zero = self._mod_one(-twist/totals[1])
+            containing_int = bisect_left(self._divvalues[1], 
+                    preimage_of_zero) % len(involution[1])
+            self._involution = involution.rotated(0, -containing_int)
+            self._twist = PointWithCoefficients(self._mod_one(\
+                    self._divpoints[1][containing_int].value - 
+                    preimage_of_zero), [0] * len(lcopy) + [1])
+            self._divpoints[1] = [self._twist]
+            for j in range(len(involution[1]) - 1):
+                self._divpoints[1].append(self._divpoints[1][-1] +
+                        self._lengths[self._involution[1][j]])
 
-    def restrict_data(self, singularity, wrapping):
-        if wrapping == 0:
-            raise ValueError, 'wrapping cannot be 0'
-        left_endpoint_coeff = vector([1] * singularity + [0] * (self.num_intervals() - singularity + 1))
-        right_endpoint_coeff = left_endpoint_coeff + self._translation_matrix[singularity]
-        left_endpoint = PointWithCoordinates(self._intex.domain_singularities()[singularity], left_endpoint_coeff)
-        right_endpoint = PointWithCoordinates(self._intex.range_singularities()[self.permutation().inverse()[singularity] - 1]\
-                + self._twist, right_endpoint_coeff)
-        if wrapping < 0:
-            left_endpoint, right_endpoint = right_endpoint, left_endpoint
-        if wrapping in [-1, 1]:
-            le, re = left_endpoint.point, right_endpoint.point
-        else:
-            le, re = -1, 1
-        upper_intersections = [self.first_intersection(le, re, i, False) \
-                for i in range(self.num_intervals())]
-        lower_intersections = [self.first_intersection(le, re, i, True) \
-                for i in range(self.num_intervals())]
-        upper_tuples = list(enumerate(upper_intersections))
-        if wrapping > 0:
-            sort_key = lambda x: -_mod_one(left_endpoint.point - x[1].point)
-        else:
-            sort_key = lambda x: -_mod_one(right_endpoint.point - x[1].point)
-        upper_tuples.sort(key = sort_key) 
-     
-        total_coordinates = right_endpoint.coordinates - left_endpoint.coordinates +\
-                vector([1] * self.num_intervals() + [0]) * (abs(wrapping) - 1)
-        if right_endpoint.point < left_endpoint.point:
-            total_coordinates += vector([1] * self.num_intervals() + [0]) 
-        total_length = total_coordinates * (vector(self._intex.lengths() + [self._twist]))
-        
-        transition_matrix = matrix(self.num_intervals() + 1)
-        for i in range(self.num_intervals() - 1):
-            transition_matrix[i] = (upper_tuples[i + 1][1] - upper_tuples[i][1]).coordinates
-        transition_matrix[self.num_intervals() - 1] = total_coordinates -\
-                (upper_tuples[-1][1] - upper_tuples[0][1]).coordinates
+        self._divvalues[1] = [x.value for x in self._divpoints[1]] 
 
-        def distance_from_left_endpoint(point_with_coordinates, is_close_to_left):
-            if is_close_to_left:
-                diff = point_with_coordinates - left_endpoint
-                if diff.point == 0.0:
-                    return (1.0, vector([1] * self.num_intervals() + [0]))
-                else:
-                    return (diff.point, diff.coordinates)
-            else:
-                diff = right_endpoint - point_with_coordinates
-                return (total_length - diff.point, total_coordinates - diff.coordinates)
+        self._length_twist_vector = [0] * len(lcopy)
+        if not self._involution.is_bottom_side_moebius():
+            self._length_twist_vector.append(self._twist.value)
+        for letter in self._lengths:
+            self._length_twist_vector[self._involution.index(letter)]\
+                    = self._lengths[letter].value
+        self._length_twist_vector = vector(self._length_twist_vector)
 
-        reference_point_distance = distance_from_left_endpoint(upper_tuples[0][1], wrapping > 0)
+    @staticmethod
+    def _mod_one(x):
+        return x - floor(x)
 
-        lower_distances_from_left_endpoint = sorted(list(enumerate([distance_from_left_endpoint(x, wrapping < 0) 
-            for x in lower_intersections])), key = lambda x: x[1][0])
-
-        position = bisect([x[1][0] for x in lower_distances_from_left_endpoint], reference_point_distance[0])
-
-        transition_matrix[-1] = lower_distances_from_left_endpoint[position % self.num_intervals()][1][1] -\
-            reference_point_distance[1]
-        if position == self.num_intervals():
-            transition_matrix[-1] += total_coordinates
-
-        pairing = [0] * self.num_intervals()
-        for i in range(self.num_intervals()):
-            pairing[upper_tuples[i][0]] = i 
-        perm = [pairing[lower_distances_from_left_endpoint[(position + i) % self.num_intervals()][0]] + 1
-                for i in range(self.num_intervals())]
-
-        return (transition_matrix, Permutation(perm))
-
-
-
-class PointWithCoordinatesNonOr(SageObject):
-    def __init__(self, point, coordinates):
-        self.point = point
-        self.coordinates = coordinates
-
-    def __repr__(self):
-        return repr((self.point, self.coordinates))
-
-    def __add__(self, other):
-        new_point = PointWithCoordinatesNonOr(self.point + other.point, 
-                self.coordinates + other.coordinates)
-        if new_point.point >= 1:
-            new_point.point -= 1
-            for i in range(len(self.coordinates)):
-                new_point.coordinates[i] -= 2
-        return new_point
-
-    def __sub__(self, other):
-        new_point = PointWithCoordinates(self.point - other.point, 
-                self.coordinates - other.coordinates)
-        if new_point.point < 0:
-            new_point.point += 1
-            for i in range(len(self.coordinates)):
-                new_point.coordinates[i] += 2
-        return new_point       
-
-def _random_involution(num_intervals):
-    import random
-    if num_intervals % 2 != 0:
-        raise ValueError, 'The number of intervals must be even.'
-    if num_intervals < 6:
-        raise ValueError, ('The involution corresponding to a foliation without saddle connection '
-    'must act on at least 6 intervals.')
-    if num_intervals == 6:
-        return Permutation([2, 1, 4, 3, 6, 5])
-    mix = range(num_intervals)
-    perm_list = [0] * num_intervals
-    while True:
-        random.shuffle(mix)
-        for i in range(num_intervals // 2):
-            perm_list[mix[2 * i]] = mix[2 * i + 1] + 1
-            perm_list[mix[2 * i + 1]] = mix[2 * i] + 1
-        perm = Permutation(perm_list)
-        if _is_involution_good(perm) and is_minimal(perm):
-            return perm
-
-
-
-
-
-class FoliationNonOrientableSurface(SageObject):
-    r"""
-    Normalized measured foliation with \mathbb{Z}_2 holonomy on a non-orientable surface.
-    """
-
-    def __init__(self, permutation, lengths):
-        if permutation.number_of_fixed_points() > 0:
-            raise ValueError, "The permutation should not have fixed points."
-        if permutation.inverse() != permutation:
-            raise ValueError, 'The permutation must be an involution.'
-        if permutation.size() != 2 * len(lengths):
-            raise ValueError, 'The list of lengths should be half as long as the size of the permutation'
-
-        count = 0
-        self._small_index = 2 * lengths
-        for x in range(2 * len(lengths)):
-            if permutation[x] - 1 > x:
-                self._small_index[x] = self._small_index[permutation[x] - 1] = count
-                count += 1
-        
-        total = sum(lengths)
-        self._lengths = [x/total/2 for x in lengths]
-
-        detailed_lengths = [self._lengths[self._small_index[i]] for i in range(2 * len(lengths))]
-        self._intex = iet.IntervalExchangeTransformation(permutation, detailed_lengths)
-        self._lifted_foliation = self.to_foliation()
-
-        def get_next(prev, distance, index_to_increase):
-            new = PointWithCoordinatesNonOr(prev.point + distance, prev.coordinates + vector([0] * len(lengths)))
-            new.coordinates[index_to_increase] += 1
-            return new
-
-
-        self._divpoints = [PointWithCoordinatesNonOr(0, vector([0] * len(lengths)))] 
-        for i in range(2 * len(lengths) - 1):
-            self._divpoints.append(get_next(self._divpoints[-1], detailed_lengths[i], self._small_index[i]))
-
-        self._translation_matrix = matrix(2 * len(lengths), len(lengths))
-        inverse_perm = self.permutation().inverse()
-        for i in range(2 * len(lengths)):
-            for j in range(2 * len(lengths)):
-                if i < j and inverse_perm[i] > inverse_perm[j]:
-                    self._translation_matrix[i, self._small_index[j]] += 1
-                if i > j and inverse_perm[i] < inverse_perm[j]:
-                    self._translation_matrix[i, self._small_index[j]] += -1
-        self._translations = self._translation_matrix * vector(self._lengths)
-
-        self._index_of_interval = []
-        count = 0
-        for i in range(self.num_intervals()):
-            j = self.permutation()[i] - 1 
-            if j > i:
-                self._index_of_interval.append(count)
-                count += 1
-            else:
-                self._index_of_interval.append(self._index_of_interval[j])
+    @staticmethod
+    def _basis_vector(n, k):
+        l = [0] * n
+        l[k] = 1
+        return l
 
     @classmethod
-    def random(cls, num_intervals, permutation = None):
-        import random
-        if permutation == None:
-            permutation = _random_involution(num_intervals)
-        lengths = [random.random() for i in range(num_intervals // 2)]
-        return FoliationNonOrientableSurface(permutation, lengths)
+    def orientable_arnoux_yoccoz(self, genus):
+        sf = arnoux_yoccoz_factor(genus)
+        l = [1 / sf^(i + 1) for i in range(genus)] * 2
+        return Foliation(Involution.orientable_arnoux_yoccoz(genus),
+                sorted(l, reverse = True), twist = 1)
 
+    @classmethod
+    def nonorientable_arnoux_yoccoz(self, genus):
+        sf = arnoux_yoccoz_factor(genus - 1)
+        return Foliation(Involution.nonorientable_arnoux_yoccoz(\
+                genus), [1/sf^i for i in range(genus - 1)])
+
+    @classmethod
+    def RP2_arnoux_yoccoz(self):
+        sf = arnoux_yoccoz_factor(3)
+        return Foliation(Involution.RP2_arnoux_yoccoz(), 
+                [1/sf + 1/sf^2, 1/sf^2 + 1/sf^3, 1/sf + 1/sf^3])
+                
+
+    def __eq__(self, other):
+        return self._involution == other._involution and\
+                abs(self._length_twist_vector -
+                    other._length_twist_vector) < epsilon
 
     def __repr__(self):
-        return 'Foliation with Z_2 holomony on a non-orientable surface of genus {0}.\n'\
-                'Permutation: {1}\nLengths: {2}'.format(self.genus(), 
-                        self._intex.permutation().to_permutation(), self._intex.lengths())
-
-    def num_intervals(self):
-        return len(self._intex.lengths())
-    
-    def permutation(self):
-        return self._intex.permutation().to_permutation()
-
-    def to_foliation(self):
-        return Foliation(self._intex.permutation().to_permutation(), self._intex.lengths(), 1/2)
-
-    def euler_char(self):
-        return self.to_foliation().euler_char() / 2
-
-    def genus(self):
-        return 2 - self.euler_char()
-
-    def singularity_type_prongs(self):
-        prongs_of_lift = self._lifted_foliation.singularity_type_prongs()
-        return [prongs_of_lift[i] for i in range(len(prongs_of_lift)) if i % 2 == 0] 
-
-    TransitionData = namedtuple('TransitionData', 'tr_matrix, new_perm')
-
-    def rotation_data(self, k):
-        new_permutation = rotating_permutation(self.num_intervals(), -k) *\
-                self.permutation() *\
-                rotating_permutation(self.num_intervals(), k)
-        m = matrix(self.num_intervals() / 2)
-        count = 0
-        for i in range(self.num_intervals()): 
-            if new_permutation[i] - 1 > i:
-                m[count, self._index_of_interval[(i - k) % self.num_intervals()]] = 1
-                count += 1
-
-        return self.TransitionData(tr_matrix = m, new_perm = new_permutation)
-    
-    def reverse_data(self):
-        reversing_permutation = Permutation(range(self.num_intervals(), 0, -1))
-        new_permutation = reversing_permutation * self.permutation() * \
-                reversing_permutation
-        m = matrix(self.num_intervals() / 2)
-        count = 0
-        for i in range(self.num_intervals()): 
-            if new_permutation[i] - 1 > i:
-                m[count, self._index_of_interval[self.num_intervals() - 1 - i]] = 1
-                count += 1
-
-        return self.TransitionData(tr_matrix = m, new_perm = new_permutation)
-    
+        if self._involution.is_bottom_side_moebius():
+            return "{0}\nLengths:{1}".format(\
+                    self._involution, self._length_twist_vector)
+        return "{0}\nLengths:{1}\nTwist:{2}".format(\
+                self._involution, self._length_twist_vector[:-1], 
+                self._twist.value)
 
 
-    def get_interval(self, point):
-        interval = self._intex.in_which_interval(point)- 1
-        if abs(point - self._intex.domain_singularities()[interval]) < epsilon or\
-                abs(point - self._intex.domain_singularities()[interval + 1]) < epsilon:
-                    raise ValueError, 'Saddle connection found.'
-        return interval
-    
-    def first_intersection(self, left_endpoint, right_endpoint, index_of_singularity):
-        point = self._intex.domain_singularities()[index_of_singularity]
-        interval_intersection_count = [0] * self.num_intervals()
-        from_above = True
-        while not is_between(left_endpoint, right_endpoint, point):
-            point = _mod_one(point + 1/2)
-           
-            if is_between(left_endpoint, right_endpoint, point):
-                from_above = False
-                break
-            interval = self.get_interval(point)
-            point += self._translations[interval]
-            interval_intersection_count[interval] += 1
-            self.get_interval(point)
-
-        coefficients = self._divpoints[index_of_singularity].coordinates
-        coefficients += vector(interval_intersection_count) * self._translation_matrix
-        calculated_point = coefficients * vector(self._lengths)
-        coefficients -= floor((calculated_point - point) * 2 + 0.5) * vector([1] * (self.num_intervals() // 2))
-        #print calculated_point, point
-        calculated_point = coefficients * vector(self._lengths)
-        #print calculated_point
-        return (PointWithCoordinates(point, coefficients), from_above)
-
-    def restrict_data(self, singularity):
-        left_endpoint = self._divpoints[singularity]
-        right_endpoint = self._divpoints[self.permutation().inverse()[singularity] - 1]
-
-        intersections = [self.first_intersection(left_endpoint.point, right_endpoint.point, i)
-                for i in range(self.num_intervals())]
-        total = right_endpoint - left_endpoint
-
-        def distance_from_right_endpoint(point_with_coordinates, is_from_above):
-            diff = right_endpoint - point_with_coordinates
-            if is_from_above:
-                return diff 
-            else:
-                return PointWithCoordinatesNonOr(diff.point + total.point, 
-                        diff.coordinates + total.coordinates)
-
-        intersections = [(x, distance_from_right_endpoint(x[0], x[1]))
-                for x in intersections]
-
-        tuples = list(enumerate(intersections))
-        tuples.sort(key = lambda x: -x[1][1].point)
-     
-        pairing = [0] * self.num_intervals()
-        for i in range(self.num_intervals()):
-            pairing[tuples[i][0]] = i 
-        new_permutation = Permutation([pairing[self.permutation()[tuples[i][0]] - 1] + 1
-                for i in range(self.num_intervals())])
-        
-        m = matrix(self.num_intervals() // 2)
-        count = 0
-        for i in range(self.num_intervals()):
-            if new_permutation[i] - 1 > i:
-                m[count] = (tuples[i][1][1] - tuples[i + 1][1][1]).coordinates
-                count += 1
-
-        return self.TransitionData(tr_matrix = m, new_perm = new_permutation)
+    TransitionData = namedtuple('TransitionData', 'tr_matrix,new_inv')
 
     def new_foliation(self, transition_data):
-        new_vector = transition_data.tr_matrix * vector(self._lengths)
-        return FoliationNonOrientableSurface(transition_data.new_perm, new_vector.list())
-
-    def find_pseudo_anosov_candidates(self, depth, transition_matrix_so_far = [], 
-            permutation_so_far = [], 
-            encoding_sequence_so_far = [],
-            initial_permutation = []): 
-        if transition_matrix_so_far == []:
-            transition_matrix_so_far = matrix.identity(self.num_intervals() // 2)
-            permutation_so_far = self.permutation()
-            initial_permutation = self.permutation()
-            _global_storage = []
-            
-        ret_list = []
-                
-        for i in range(self.num_intervals()):
-            for j in range(2):
-                if j == 0:
-                    tr_data = self.rotation_data(i) 
-                    final_encoding = encoding_sequence_so_far + [i, 'not reversed']
-                    final_foliation = self.new_foliation(tr_data) 
-                    final_matrix = tr_data.tr_matrix * transition_matrix_so_far
-                    final_permutation = tr_data.new_perm 
-                else:
-                    tr_data = final_foliation.reverse_data()
-                    final_encoding = encoding_sequence_so_far + [i, 'reversed']
-                    final_matrix = tr_data.tr_matrix * final_matrix
-                    final_permutation = tr_data.new_perm
-
-                if final_permutation == initial_permutation:
-                    ret_list.extend([(x, final_encoding)
-                        for x in get_pseudo_anosov_candidates(matrix(RDF, final_matrix), False)])
-                else:
-                    global _global_storage
-                    _global_storage.append('not matching permutation')
-            
-        if depth > 0:
-            for i in range(self.num_intervals()):
-                try:
-                    tr_data = self.restrict_data(i)
-                    ret_list += [pa for pa in self.new_foliation(tr_data).\
-                            find_pseudo_anosov_candidates(depth - 1,\
-                        tr_data.tr_matrix * transition_matrix_so_far,\
-                        tr_data.new_perm, encoding_sequence_so_far + [i], \
-                        initial_permutation)] 
-                except ValueError:
-                    pass
-            
-        return ret_list
-
-    def verify_candidate(self, pseudo_anosov_candidate, exact_check = False):
-        try:
-            new_fol = foliation = FoliationNonOrientableSurface(self.permutation(),\
-                    pseudo_anosov_candidate[0][1])
-        except ValueError:
-            #print 'Candidate with immediate saddle connection:', pseudo_anosov_candidate
-            return False
-
-        try:
-            transition_matrix = matrix.identity(self.num_intervals() // 2)
-            for i in range(len(pseudo_anosov_candidate[1]) - 1):
-                if i == len(pseudo_anosov_candidate[1]) - 2:
-                    tr_data = new_fol.rotation_data(pseudo_anosov_candidate[1][i])
-                else:
-                    tr_data = new_fol.restrict_data(pseudo_anosov_candidate[1][i])
-                transition_matrix = tr_data.tr_matrix * transition_matrix
-                new_fol = new_fol.new_foliation(tr_data)
-            if pseudo_anosov_candidate[1][-1] == 'reversed':
-                tr_data = new_fol.reverse_data()    
-                transition_matrix = tr_data.tr_matrix * transition_matrix
-                new_fol = new_fol.new_foliation(tr_data)
-        except ValueError:
-            #print 'Candidate with non-immediate saddle connection:', new_fol, pseudo_anosov_candidate
-            return False
-
-        ret_list = []
-
-        if pseudo_anosov_candidate[0][0] in QQbar:
-            for cand in get_pseudo_anosov_candidates(matrix(QQ, transition_matrix), False):
-                if pseudo_anosov_candidate[0] == cand:
-                    #print transition_matrix.eigenvalues()
-                    #print transition_matrix.charpoly()
-                    #print pseudo_anosov_candidate
-                    return True
-        elif pseudo_anosov_candidate[0][0] in CDF:
-            for cand in get_pseudo_anosov_candidates(matrix(RDF, transition_matrix), False):
-                if pseudo_anosov_candidate[0] == cand:
-                    if not exact_check:
-                        #print matrix(RDF, transition_matrix).eigenvalues()
-                        #print transition_matrix.charpoly()
-                        return True
-                    qqbar_candidates = get_pseudo_anosov_candidates(matrix(QQ, transition_matrix), False)
-                    for x in qqbar_candidates:
-                        if abs(x[0] - cand[0]) < epsilon and sum([abs(x[1][k] - cand[1][k]) for k in range(len(x[1]))]) < epsilon:
-                            #print pseudo_anosov_candidate
-                            return self.verify_candidate((x, pseudo_anosov_candidate[1]))
-                else:
-                    return False
+        new_vector = transition_data.tr_matrix * self._length_twist_vector 
+        if self._involution.is_bottom_side_moebius():
+            return Foliation(transition_data.new_inv, 
+                new_vector.list())
         else:
-            raise ValueError, 'Unexpected number field'
-    
-    def find_pseudo_anosovs(self, depth):
-        return [cand for cand in self.find_pseudo_anosov_candidates(depth) if self.verify_candidate(cand)]
+            return Foliation(transition_data.new_inv, 
+                new_vector[:-1].list(), new_vector[-1])
 
-def _is_involution_good(involution):
-    half_size = involution.size() // 2
-    i = 0
-    while i < half_size:
-        for j in range(half_size):
-            if i < involution[i + j] - 1 < i + half_size: 
-                i = i + j + 1
-                break
+    def _simple_transformation_data(self, new_involution, 
+            twist_row = None):
+        m = matrix(self._num_coeffs)
+        for letter in self._involution.alphabet():
+            m[new_involution.index(letter),
+                    self._involution.index(letter)] = 1
+        if not self._involution.is_bottom_side_moebius():
+            m[-1] = twist_row
+        return self.TransitionData(tr_matrix = m, 
+                new_inv = new_involution)
+
+    def _rotation_data(self, k):
+        n = len(self._divpoints[0])
+        k = k % n
+        twist_row = [0] * self._num_coeffs
+        twist_row[-1] = 1
+        for i in range(k):
+            twist_row[self._involution.index(\
+                    self._involution[0][n - 1 - i])] += 1
+        return self._simple_transformation_data(\
+                self._involution.rotated(k, 0),
+                twist_row = twist_row)
+
+    def _reverse_data(self):
+        return self._simple_transformation_data(\
+                self._involution.reversed(),
+                twist_row = [0] * (self._num_coeffs - 1) + [-1])
+
+    def rotated(self, k):
+        return self.new_foliation(self._rotation_data(k))
+
+    def reversed(self):
+        return self.new_foliation(self._reverse_data())
+
+    def _in_which_interval(self, value, side):
+        assert(side == 0 or not self._involution.is_bottom_side_moebius())
+        interval = bisect(self._divvalues[side], value)
+        if interval == 0:
+            to_check = {self._divvalues[side][0]}
+        elif interval == len(self._divpoints[side]):
+            to_check = {self._divvalues[side][interval - 1],
+                    self._divvalues[side][0] + 1}
         else:
-            return False
-    return True
+            to_check = {self._divvalues[side][k]
+                    for k in {interval - 1, interval}}
 
-#def matrix_with_charpoly(polynomial):
-#    m = matrix(polynomial.degree())
-#    coeffs = polynomial.coeffs()
-#    for i in range(m.nrows() - 1):
-#        m[i, i + 1] = 1
-#    for i in range(m.nrows()):
-#        m[-1, i] =  -coeffs[i] / coeffs[-1]
-#    return m
+        if any(abs(value - x) < epsilon for x in to_check):
+            raise SaddleConnectionError()
+        return (interval - 1) % len(self._divpoints[side])
 
-def arnoux_yoccoz_factor(genus, field = CDF):
-    R.<x> = ZZ[]
-    poly = R([-1] * genus + [1])
-    return max([abs(x[0]) for x in poly.roots(CDF)])
+    def _map(self, point, side, containing_interval = None):
+        if side == 1 and self._involution.is_bottom_side_moebius():
+            return (1, point.half_added())
+        if containing_interval == None:
+            containing_interval = self._in_which_interval(\
+                    point.value, side)
+                    
+        flipped = self._involution.is_flipped((side, 
+                containing_interval)) 
+        new_int= self._involution.pair((side, 
+            containing_interval))
+        diff = point - self._divpoints[side][containing_interval]
+        if not flipped:
+            return (new_int[0], 
+                    (self._divpoints[new_int[0]][new_int[1]] + 
+                        diff).mod_one())
+        else:
+            return (new_int[0],
+                    (self._divpoints[new_int[0]][(new_int[1] + 1) % 
+                        len(self._divpoints[side])] - diff).\
+                                mod_one())
+
+    IntersectionData = namedtuple('IntersectionData',
+            'point, side, is_flipped')
+
+    def _first_intersection(self, side, pos, intervals = None,
+            crossings = None):
+        assert(not self._involution.is_bottom_side_moebius() or 
+                side == 0)
+        point = self._divpoints[side][pos]
+
+        if intervals == None:
+            def terminate(p):
+                return flipped == True
+        else:
+            def terminate(p):
+                return any(interval.contains(p)
+                        for interval in intervals)
+
+        flipped = False
+
+        while not terminate(point):
+            if crossings != None:
+                crossings.append(point.value)
+            side = (side + 1) % 2
+            if self._involution.is_bottom_side_moebius() and side == 1:
+                point = point.half_added()
+            else:
+                interval = self._in_which_interval(point.value, side)
+                if self._involution.is_flipped(side, interval):
+                    flipped = not flipped
+                (side, point) = self._map(point, side, interval)
+
+        int_data = self.IntersectionData(point = point, 
+               side = side, is_flipped = flipped)
+
+        return int_data
+
+    DistanceData = namedtuple('DistanceData', 'side, distance, '
+            'is_flipped, orig_side, orig_pos')
+
+    def _get_involution(self, sorted_distances, is_lift):
+        done = set()
+        flips = set()
+        if is_lift:
+            remaining_letters = \
+                    range((len(sorted_distances[0]) + 
+                        len(sorted_distances[1]))/2, 0, -1)
+        else:
+            remaining_letters = self._involution.alphabet()
+        inv_list = [[0] * len(sorted_distances[i]) for i in {0,1}]
+        for side in {0, 1}:
+            for i in range(len(sorted_distances[side])):
+                if (side, i) in done:
+                    continue
+                letter = remaining_letters.pop()
+                on_the_right = True
+                d = sorted_distances[side][i]
+                new_side = d.orig_side
+                new_i = d.orig_pos
+                if d.is_flipped: #orintation is reversed
+                    on_the_right = False
+                    new_i = (new_i - 1) % \
+                            len(self._involution[new_side])
+                (new_side, new_i) = self._involution.pair(\
+                        (new_side, new_i))
+                if self._involution.is_flipped(new_side, new_i):
+                    on_the_right = not on_the_right
+                if not on_the_right:
+                    new_i = (new_i + 1) % \
+                            len(self._involution[new_side])
+                (new_side, new_i) = next((a, b) for a in {0, 1}
+                        for b in range(len(sorted_distances[a]))
+                        if (sorted_distances[a][b].orig_side,
+                        sorted_distances[a][b].orig_pos) == 
+                        (new_side, new_i) and (not is_lift or 
+                            sorted_distances[a][b].is_flipped !=
+                            on_the_right))
+                if sorted_distances[new_side][new_i].is_flipped:
+                    on_the_right = not on_the_right
+                if not on_the_right:
+                    new_i = (new_i - 1) % \
+                            len(sorted_distances[new_side])
+                inv_list[side][i] = inv_list[new_side][new_i] = \
+                        letter
+                done.add((side, i)); done.add((new_side, new_i))
+                if not on_the_right:
+                    flips.add(letter)
+        if inv_list[1] == []:
+            del inv_list[1]
+        return Involution(*inv_list, flips = flips)
+
+    @staticmethod
+    def _get_sorted_distances(distances):
+        return [sorted([x for x in distances if 
+            x.side == side], key = lambda s: s.distance.value)
+                for side in {0, 1}]
+
+       
+    def _create_transition_data(self, intervals, total, 
+            distance_getter):
+        intersections = self._get_intersections(intervals)
+
+        distances = [distance_getter(intersections, 
+            side, pos) for side in {0, 1}
+            for pos in range(len(intersections[side]))]
+
+        sorted_distances = self._get_sorted_distances(distances)
+        new_involution = self._get_involution(sorted_distances,
+                is_lift = False)
+        #print intersections
+        #print distances
+        #print sorted_distances
+
+        m = matrix(self._num_coeffs)
+        done = set()
+        for side in {0,1}:
+            for i in range(len(sorted_distances[side])):
+                letter = new_involution[side][i]
+                if letter in done:
+                    continue
+                diff = sorted_distances[side][(i + 1) % 
+                        len(sorted_distances[side])].distance -\
+                                sorted_distances[side][i].distance
+                if diff.value < 0:
+                    diff += total
+                m[len(done)] = diff.coefficients
+                done.add(letter)
+        if len(sorted_distances[1]) != 0:
+            m[-1] = sorted_distances[1][0].distance.coefficients -\
+                    sorted_distances[0][0].distance.coefficients
+
+        return self.TransitionData(tr_matrix = m,
+                new_inv = new_involution)
+
+    def foliation_orientable_double_cover(self):
+        """
+        Returns the orienting double cover of the foliation.
+
+        If the foliation is already orientable (i.e. the surface
+        is orientable and the holonomy is trivial, or the surface
+        is non-orientable and the holonomy is Z_2, or equivalently
+        no interval is flipped), then there is nothing to do.
+
+        So assume that it is not the case and there is at least one
+        flipped pair of intervals. Our transverse curve has trivial
+        holonomy, so it has two lifts. A leaf segment
+        with endpoints in a not flipped pair of intervals lifts to 
+        two segments, each having endpoints in one of the curves.
+        A leaf segments with endpoints in a flipped pair of intervals
+        lifts to two segments, one starting from the first curve, and
+        ending in the second, the other the other way around.
+
+        So a leaf segment with endpoints in the first lift
+        of our curve is either just a lift of a segment corresponding
+        to a not-flippped interval as above, or a concatenation of
+        many segments, starting and ending with a segment that comes
+        from a flipped interval, and with segments coming from
+        not-flipped intervals in the middle. (One first travels from
+        the first curve to the second, then returns a bunch of times
+        to the second, and finally returns to the first.)
+
+        So division points of the lifted foliation are the old 
+        division points union the following points. From each 
+        singularity travel along a separatrix, and stop just after
+        going through a strip of a flipped pair of intervals.
+        These endpoints are also new division points, so one has twice
+        as many division points for the lift foliation as for the
+        original one.
 
 
 
-def arnoux_yoccoz_permutation(genus):
-    l = []
-    for i in range(genus):
-        l.append(2 * i + 2)
-        l.append(2 * i + 1)
 
-    return Permutation(l)
+        """
+        if len(self._involution.flips()) == 0:
+            return self
+        flipped_intersections = self._get_intersections()
+        distances = []
+        for side in range(2):
+            n = len(self._divpoints[side])
+            for pos in range(n):
+                if self._involution[side][pos] == self._involution\
+                        [side][(pos - 1) % n] and self._involution.\
+                        is_flipped((side, pos)):
+                            continue
+                distances.append(self.DistanceData(side = side,
+                    distance = self._divpoints[side][pos],
+                    is_flipped = False,
+                    orig_side = side,
+                    orig_pos = pos))
+                int_data = flipped_intersections[side][pos]
+                distances.append(self.DistanceData(side = int_data.\
+                        side,
+                        distance = int_data.point,
+                        is_flipped = True,
+                        orig_side = side,
+                        orig_pos = pos))
+        sorted_distances = self._get_sorted_distances(distances)
 
-def arnoux_yoccoz_foliation(genus, field = CDF):
-    p = arnoux_yoccoz_permutation(genus)
-    sf = arnoux_yoccoz_factor(genus, field)
-    lengths = [1/sf**i for i in range(genus)]
-    return FoliationNonOrientableSurface(p, lengths)
+        new_involution = self._get_involution(sorted_distances,
+                is_lift = True)
 
-f = arnoux_yoccoz_foliation(3).to_foliation()
-g = Foliation(Permutation([1]), [1], 0.2)
-h = arnoux_yoccoz_foliation(3)
-hh = FoliationNonOrientableSurface(arnoux_yoccoz_permutation(3), [0.261016378495, 0.1766049821, 0.0623786394048])
-hhh = FoliationNonOrientableSurface(arnoux_yoccoz_permutation(3), [0.262714, 0.155554, 0.0817322]) 
-h8 = FoliationNonOrientableSurface(Permutation([3,5,1,6,2,4,8,7]),[0.0944422795324, 0.178500974036, 0.074245928173, 0.152810818258])
-h8_2 = FoliationNonOrientableSurface(Permutation([3,5,1,6,2,4,8,7]), [0.0820003383086, 0.194387134927, 0.065494592731, 0.158117934033])    
+
+        lengths = {new_involution[side][pos] :(sorted_distances[side]\
+                [(pos + 1) % len(sorted_distances[side])].distance -
+                sorted_distances[side][pos].distance).mod_one().value
+                for side in range(2) for pos in 
+                range(len(sorted_distances[side]))}
+        return Foliation(new_involution, lengths)
+ 
+
+    def surface_orientable_double_cover(self):
+        """
+        Returns the double cover of the foliation that orients the
+        surface.
+
+        If the surface is already orientable, there is nothing to do.
+        If not, then the our transverse curve, which separates the
+        non-orientable surface to a Moebius band and another surface
+        has two lifts. The Moebius band lifts to an annulus bounded
+        by these two lifts. 
+        
+        If the other surface is orientable (i.e.
+        all intervals are flipped),
+        it has two lifts homeomorphic to itself, and they are
+        glued to the two sides of the annulus. The folition inside
+        the annulus has the effect of a twist of 1/2 between the 
+        surfaces on the two sides. All pairs of intervals remain
+        flipped.
+
+        If the complement of the Mobius band is non-orientable (i.e.
+        there is at least one interval which is not twisted), then
+        its double cover has one components with two bounding circles
+        that are glued to the two boundary circles of the annulus.
+        Intervals that were flipped stay flipped and will appear
+        on both sides of the transverse curve. Intervals that were
+        not flipped will turn into a pair of intervals on different
+        sided, still not flipped (i.e. strips connecting 
+        different sides of the annulus).
+
+        In any case, one only has to change the interval pairings for
+        the new involution, but the flips are inherited, and add a 
+        1/2 twist.
+
+        OUTPUT:
+
+        - Foliation - if self is already orientable, the output is
+          itself. Otherwise it is the foliation obtained by taking
+          the double cover that orients the surface.
+
+        EXAMPLES::
+            
+            sage: f = Foliation.nonorientable_arnoux_yoccoz(4)
+            sage: g = Foliation.orientable_arnoux_yoccoz(3)
+            sage: f.surface_orientable_double_cover() == g
+            True
+            
+            sage: f = Foliation.nonorientable_arnoux_yoccoz(10)
+            sage: g = Foliation.orientable_arnoux_yoccoz(9)
+            sage: f.surface_orientable_double_cover() == g
+            True
+        """
+        if self._involution.is_surface_orientable():
+            return self
+        assert(self._involution.is_bottom_side_moebius())
+        n = len(self._divpoints[0])
+        alphabet = range(n, 0, -1)
+        inv_list = [[0] * n for i in range(2)]
+        done = set()
+        flips = set()
+        lengths = {}
+        for i in range(n):
+            if i in done:
+                continue
+            j = self._involution.pair((0, i))[1]
+            letter = alphabet.pop()
+            letter2 = alphabet.pop()
+            lengths[letter] = lengths[letter2] = \
+                    self._lengths[self._involution[0][i]].value
+            if self._involution.is_flipped((0, i)):
+                inv_list[0][i] = inv_list[0][j] = letter
+                inv_list[1][i] = inv_list[1][j] = letter2
+                flips.add(letter)
+                flips.add(letter2)
+            else:
+                inv_list[0][i] = inv_list[1][j] = letter
+                inv_list[0][j] = inv_list[1][i] = letter2
+            done.add(i); done.add(j)
+        return Foliation(Involution(*inv_list, flips = flips), 
+                lengths, twist = 1/2)
+
+
+    def _num_letters(self):
+        return len(self._involution.alphabet())
+
+    def _check_not_flipped(self, side, pos):
+        if self._involution.is_flipped(side, pos):
+            raise RestrictionError('The specified interval should '
+                    'not be flipped, but it is.')
+
+    def _check_flipped(self, side, pos):
+        if not self._involution.is_flipped(side, pos):
+            raise RestrictionError('The specified interval '
+                    'should be flipped, but it isn\'t.')
+
+    def _check_same_side(self, side, pos):
+        if self._involution.pair((side, pos))[0] != side:
+            raise RestrictionError('The interval pair should '
+                    'be on the same same side, but it isn\'t.')
+
+    def _check_different_side(self, side, pos):
+        if self._involution.pair((side, pos))[0] == side:
+            raise RestrictionError('The interval pair should '
+                    'be on different sides, but it isn\'t.')
+
+    def _assert_different_pair(self, side1, pos1, side2, pos2):
+        if (side1, pos1) in {(side2, pos2),
+                self._involution.pair((side2, pos2))}:
+            raise RestrictionError('The chosen pairs should be '
+                    'different, but they are not.')
+
+    def _get_intersections(self, intervals = None):
+        return [[self._first_intersection(side, pos, 
+            intervals = intervals)
+                for pos in range(len(self._divpoints[side]))]
+                for side in {0,1}]
+
+    def _get_right_endpoint(self, side, pos):
+        return self._divpoints[side][(pos + 1) %
+                len(self._divpoints[side])]
+
+    def _get_left_endpoint(self, side, pos):
+        return self._divpoints[side][pos]
+
+
+    def _restrict_not_flipped_same_side(self, side, pos):
+        self._check_not_flipped(side, pos)
+        self._check_same_side(side, pos)
+        #n = len(self._divpoints[side])
+        left_endpoint = self._get_right_endpoint(side, pos)
+        side2, pos2 = self._involution.pair((side, pos))
+        right_endpoint = self._get_right_endpoint(side2, pos2)
+
+        interval = Interval(left_endpoint, right_endpoint)
+        total = interval.length()
+
+        def get_distance_data(intersections, side, pos):
+            int_data = intersections[side][pos]
+            distance = (int_data.point - left_endpoint).mod_one()
+            if int_data.side == 1:
+                distance += total
+            return self.DistanceData(side = 0,
+                distance = distance,
+                is_flipped = int_data.is_flipped,
+                orig_side = side,
+                orig_pos = pos) 
+
+        return self._create_transition_data([interval], total + total,
+                get_distance_data)
+
+
+    def _restrict_not_flipped_different_side(self, side, pos):
+        self._check_not_flipped(side, pos)
+        self._check_different_side(side, pos)
+        
+        left_endpoint = self._get_right_endpoint(side, pos)
+        side2, pos2 = self._involution.pair((side, pair))
+        right_endpoint = self._get_right_endpoint(side2, pos2)
+
+        interval = Interval(left_endpoint, right_endpoint)
+
+        total = interval.length()
+
+        def get_distance_data(intersections, side, pos):
+            int_data = intersections[side][pos]
+            return self.DistanceData(side = int_data.side,
+                distance = (int_data.point -left_endpoint).mod_one(),
+                is_flipped = int_data.is_flipped,
+                orig_side = side,
+                orig_pos = pos)
+
+        return self._create_transition_data([interval], total)
+
+           
+    def _restrict_flipped_two_sided(self, side1, pos1,
+            side2, pos2):
+        self._assert_different_pair(side1, pos1, side2, pos2)
+
+        Endpoint = namedtuple('Endpoint', 
+                'point, end, is_closed, side')
+
+        ints =[[(side1, pos1),
+            self._involution.pair((side1, pos1))], [(side2, pos2), 
+                self._involution.pair((side2, pos2))]]
+        endpoints = []
+        for i in {0,1}:
+            self._check_flipped(*ints[i][0])
+            endpoints.extend([Endpoint(point=self._get_left_endpoint(\
+                    *ints[i][0]),end = 'left', is_closed = (i == 1), 
+                    side = ints[i][0][0]), 
+                    Endpoint(\
+                    point = self._get_right_endpoint(*ints[i][1]),
+                    end = 'right', is_closed = (i == 1),
+                    side = ints[i][1][0])])
+
+        endpoints.sort(key = lambda x: x.point.value)
+        while endpoints[0].end == 'right' or\
+                endpoints[1].end == 'left':
+                    endpoints = endpoints[-1:] + endpoints[:-1]
+
+
+        def create_interval(i, j):
+            return Interval(endpoints[i].point,
+                endpoints[j].point,
+                is_closed_on_left = endpoints[i].is_closed,
+                is_closed_on_right = endpoints[j].is_closed)
+
+
+        if endpoints[1].end == 'right':
+            intervals = [create_interval(0, 1), create_interval(2, 3)]
+        else:
+            if endpoints[1].side == endpoints[2].side:
+                interval1 = create_interval(1, 2)
+                interval2 = create_interval(0, 3)
+            else:
+                interval2 = create_interval(0, 2)
+                interval1 = create_interval(1, 3)
+            if endpoints[1].side == 0:
+                intervals = [interval1, interval2]
+            else:
+                intervals = [interval2, interval1]
+
+        total = intervals[0].length() + intervals[1].length() 
+
+        def get_distance_data(intersections, side, pos):
+            int_data = intersections[side][pos]
+            if int_data.side == 0:
+                if intervals[0].contains(int_data.point):
+                    distance = (int_data.point -
+                            points_with_coeffs[intervals[0][0]]).\
+                                    mod_one()
+                    new_side = 0
+                    is_flipped = int_data.is_flipped
+                else:
+                    distance = total - (int_data.point - 
+                            points_with_coeffs[intervals[1][0]]).\
+                                    mod_one()
+                    new_side = 1
+                    is_flipped = not int_data.is_flipped
+            else:
+                if intervals[1].contains(int_data.point):
+                    distance = total - (int_data.point - 
+                            points_with_coeffs[intervals[1][0]]).\
+                                    mod_one()
+                    new_side = 0
+                    is_flipped = not int_data.is_flipped
+                else:
+                    distance = (int_data.point -
+                            points_with_coeffs[intervals[0][0]]).\
+                                    mod_one()
+                    new_side = 1
+                    is_flipped = int_data.is_flipped
+            return self.DistanceData(side = new_side,
+                distance = distance,
+                is_flipped = is_flipped,
+                orig_side = side,
+                orig_pos = pos)
+
+        return self._create_transition_data(intervals, total,
+                get_distance_data)
+
+    @staticmethod
+    def _get_distances(intersections, getter_function):
+        return [getter_function(side, pos) for side in {0, 1}
+            for pos in range(len(intersections[side]))]
+
+
+
+    def _restrict_flipped_same_side_one_sided(self, side1, pos1,
+            side2, pos2):
+        self._check_flipped(side1, pos1)
+        self._check_flipped(side2, pos2)
+        self._assert_different_pair(side1, pos1, side2, pos2)
+        assert(self._involution.is_bottom_side_moebius())
+        
+        n = len(self._divpoints[0])
+        center_left = self._divpoints[0][(pos1 + 1) % n]
+        center_right = self._divpoints[0][pos2]
+        other_left = self._divpoints[0][self._involution.pair(\
+                (side1, pos1))[1]]
+        other_right = self._divpoints[0][(self._involution.pair(\
+                (side2, pos2))[1] + 1) % n]
+        center_int = Interval(center_left, center_right,
+                is_closed_on_left = True, is_closed_on_right = True)
+        if center_int.contains(other_left) or \
+                center_int.contains(other_right):
+                    raise RestrictionError('Specified transverse '
+                    'curve does not exist. Combinatorically invalid '
+                    'choice for the intervals.')
+        if (other_right - other_left).mod_one().value <= 1/2:
+            raise RestrictionError('Specified transverse curve does '
+            'not exist. The length parameters doesn\'t allow '
+            'closing the curve to a transverse curve.')
+        other_left = other_left.half_added()
+
+        other_int = Interval(other_left, other_right,
+                is_closed_on_left = False, is_closed_on_right = False)
+
+        intervals = [center_int, other_int]
+
+        total = intervals[0].length() + intervals[1].length()
+
+        def get_distance_data(intersections, side, pos):
+            int_data = intersections[side][pos]
+            if int_data.side == 0:
+                if intervals[0].contains(int_data.point):
+                    distance = (int_data.point - center_left).\
+                            mod_one()
+                    is_flipped = int_data.is_flipped
+                else:
+                    distance = total + total - (int_data.point - 
+                            other_left).mod_one()
+                    is_flipped = not int_data.is_flipped
+            else:
+                if intervals[1].contains(int_data.point):
+                    distance = total - (int_data.point - 
+                            other_left).mod_one()
+                    is_flipped = not int_data.is_flipped
+                else:
+                    distance = (int_data.point - center_left).\
+                            mod_one() + total
+                    is_flipped = int_data.is_flipped
+            return self.DistanceData(side = 0,
+                distance = distance,
+                is_flipped = is_flipped,
+                orig_side = side,
+                orig_pos = pos)
+
+        return self._create_transition_data(intervals, total + total,
+                get_distance_data)
+
+
+#    def _find_pseudo_anosov_candidates(self, depth,
+
+
+#f = Foliation(Involution('a a b b c c'), [1, 2, 3])
+
