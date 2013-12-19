@@ -789,68 +789,45 @@ epsilon = 1e-10
 
 class PointWithCoefficients(SageObject):
     """
-    Represents a real number together with its coefficients
-    as a linear combination of the a certain set of real numbers.
+    Represents a real number together with its coefficients as
+    a linear combination of the a certain set of real numbers.
 
-    In practice this set is the set of interval lengths and possibly
-    the twist of a Foliation.
-
-    This class works in two modes. In one case there is no twist (when
-    the bottom side of the Foliation is an unpunctured Moebius band), in the
-    other case there is a twist. The twist coefficient has to be treated
-    somewhat differently from the other cofficients.
-
-    Note that only the value of the real number and the coefficients are 
-    stored in the objects, the generator set is not.
+    In practice this set is the set of interval lengths and 
+    possibly the twist of a Foliation.
 
     INPUT:
 
-    - ``value`` - a real number (can be floating point, or an exact 
-      algebraic number)
+    - ``value`` - a real number (can be floating point, 
+      or an exact algebraic number)
 
-    - ``coefficients`` - a list or tuple or vector of the coefficients
-
-    - ``one_sided`` - boolean, False by default. If set to False, the last
-      element of the coefficient vector is considered to be the twist. If
-      True, there is no twist coefficient.
+    - ``coefficients`` - a list or tuple or vector of 
+      the coefficients
 
     EXAMPLES:
 
-    The coefficients can be specified as a list, tuple or vector::
+    The coefficients can be specified as a list, tuple or 
+    vector::
 
         sage: a = PointWithCoefficients(1.2, (3, -1, 0))
         sage: b = PointWithCoefficients(0.8, [2, 1, 5])
-        sage: c = PointWithCoefficients(-1, vector([0, 3, 2]),\
-                one_sided = True)
-        sage: d = PointWithCoefficients(3.4, (2, 3))
-        sage: e = PointWithCoefficients(8, (1, 1, 1), one_sided = True)
+        sage: c = PointWithCoefficients(3.4, vector((2, 3)))
 
-    One can add or subtract two objects as long as they are of the same type:
+    One can add or subtract two objects as long as they are 
+    of the same type:
 
         sage: a + b
         (2.00000000000000, (5, 0, 5))
         sage: a - b
         (0.400000000000000, (1, -2, -5))
-        sage: c + e
-        (7, (1, 4, 3))
-        sage: c - e
-        (-9, (-1, 2, 1))
-        sage: a + c
-        Traceback (most recent call last):
-        ...
-        TypeError: Cannot add a point with a twist coefficient and a point without twist coefficient
-        sage: a - d
+        sage: a - c
         Traceback (most recent call last):
         ...
         TypeError: Cannot subtract two PointWithCoefficients of different types
     
-
-
     """
-    def __init__(self, value, coefficients, one_sided = False):
+    def __init__(self, value, coefficients):
         self.value = value
         self.coefficients = vector(coefficients)
-        self._one_sided = one_sided
 
     def __repr__(self):
         """
@@ -860,15 +837,13 @@ class PointWithCoefficients(SageObject):
 
             sage: PointWithCoefficients(3, (4, 3, 2))
             (3, (4, 3, 2))
-            sage: PointWithCoefficients(sqrt(2), (2, -2), one_sided = True)
-            (sqrt(2), (2, -2))
 
         """
         return repr((self.value, self.coefficients))
 
     def __add__(self, other):
         """
-        Adds the numbers are their coefficient vectors.
+        Adds the numbers and their coefficient vectors.
 
         OUTPUT:
 
@@ -878,77 +853,51 @@ class PointWithCoefficients(SageObject):
 
         sage: a = PointWithCoefficients(1.2, (3, -1, 0))
         sage: b = PointWithCoefficients(0.8, (2, 1, 5))
-        sage: c = PointWithCoefficients(-1, (0, 3, 2), one_sided = True)
-        sage: d = PointWithCoefficients(3.4, (2, 3))
-        sage: e = PointWithCoefficients(8, (1, 1, 1), one_sided = True)
+        sage: c = PointWithCoefficients(3.4, (2, 3))
 
         sage: a + b
         (2.00000000000000, (5, 0, 5))
 
-        sage: c + e
-        (7, (1, 4, 3))
-
         sage: a + c
-        Traceback (most recent call last):
-        ...
-        TypeError: Cannot add a point with a twist coefficient and a point without twist coefficient
-
-        sage: a + d
         Traceback (most recent call last):
         ...
         TypeError: Cannot add two PointWithCoefficients of different types
 
         """
-        if self._one_sided != other._one_sided:
-            raise TypeError("Cannot add a point with a twist coefficient"
-                    " and a point without twist coefficient")
         try:
-            return PointWithCoefficients(self.value + other.value,
-                    self.coefficients + other.coefficients,
-                    one_sided = self._one_sided)
+            return PointWithCoefficients(self.value + 
+                    other.value,
+                    self.coefficients + other.coefficients)
         except TypeError:
-            raise TypeError("Cannot add two PointWithCoefficients of "
-                    "different types")
+            raise TypeError("Cannot add two "
+            "PointWithCoefficients of different types")
         
     def __sub__(self, other):
         """
-        Adds the numbers are their coefficient vectors.
+        Subtracts the numbers and their coefficient vectors.
 
         OUTPUT:
 
-        - PointWithCoefficients - the sum
+        - PointWithCoefficients - the difference
 
         TESTS::
 
         sage: a = PointWithCoefficients(1.2, (3, -1, 0))
         sage: b = PointWithCoefficients(0.8, [2, 1, 5])
-        sage: c = PointWithCoefficients(-1, vector([0, 3, 2]),\
-                one_sided = True)
-        sage: d = PointWithCoefficients(3.4, (2, 3))
-        sage: e = PointWithCoefficients(8, (1, 1, 1), one_sided = True)
+        sage: c = PointWithCoefficients(3.4, (2, 3))
 
         sage: a - b
         (0.400000000000000, (1, -2, -5))
-        sage: c - e
-        (-9, (-1, 2, 1))
         sage: a - c
-        Traceback (most recent call last):
-        ...
-        TypeError: Cannot subtract a point with a twist coefficient and a point without twist coefficient
-        sage: a - d
         Traceback (most recent call last):
         ...
         TypeError: Cannot subtract two PointWithCoefficients of different types
 
         """
-        if self._one_sided != other._one_sided:
-            raise TypeError("Cannot subtract a point with "
-                    "a twist coefficient and a point "
-                    "without twist coefficient")
         try:
-            return PointWithCoefficients(self.value - other.value,
-                    self.coefficients - other.coefficients,
-                    one_sided = self._one_sided)
+            return PointWithCoefficients(self.value - 
+                    other.value,
+                    self.coefficients - other.coefficients)
         except TypeError:
             raise TypeError("Cannot subtract two "
                     "PointWithCoefficients of different types")
@@ -958,17 +907,10 @@ class PointWithCoefficients(SageObject):
         Returns the PointWithCoefficients corresponding to the
         real number of self modulo 1.
 
-        If there is a twist coefficient, i.e. if the bottom
-        side of the foliation is not a Moebius band, then the
-        sum of the numbers in the generating set used for
+        The sum of the numbers in the generating set used for
         linear combinations is 1 hence all but the twist
         coefficient is decreased by the floor of the real
         number of self.
-
-        If there is no twist coefficients, then the sum of the
-        generating numbers is 1/2, so all coefficients are
-        descreased by twice the floor of the real number of
-        self.
 
         OUTPUT:
 
@@ -984,88 +926,286 @@ class PointWithCoefficients(SageObject):
             sage: q.mod_one()
             (0.700000000000000, (2, 4, 6, -2))
 
-            sage: r = PointWithCoefficients(3.3, (-1, 2, 1),\
-                    one_sided = True)
-            sage: r.mod_one()
-            (0.300000000000000, (-7, -4, -5))
-
         """
         if self.value == 0: #need to check beacuse of a bug
             # with algebraic numbers
             n = 0
         else:
             n = floor(self.value)
-        if self._one_sided:
-            return PointWithCoefficients(self.value - n, 
-                    [x - 2 * n for x in self.coefficients], 
-                one_sided = self._one_sided)
-
         return PointWithCoefficients(self.value - n, [x - n 
             for x in self.coefficients[:-1]] + \
-                    [self.coefficients[-1]],
-                    one_sided = self._one_sided)
-
-    def half_added(self):
-        assert(self._one_sided)
-        return (self + PointWithCoefficients(1/2,
-            [1] * (len(self.coefficients)),
-            one_sided = True)).mod_one()
+                    [self.coefficients[-1]])
 
 def arnoux_yoccoz_factor(genus, field = RDF):
+    """
+    Returns the Perron root of the polynomials 
+    $x^g - x^{g-1} - ... - 1$.
+
+    INPUT:
+
+    - ``genus`` - integer, the genus of the orientable
+      closed Arnoux-Yoccoz surface, which is the same as the degree
+      of the minimalpolynomial.
+
+    - ``field`` - the number field in which roots of the polynomial
+      are searched. The default is RDF, but one want the exact number
+      in QQbar.
+
+    OUTPUT:
+
+    - number -- number type depends on the field specified
+
+    EXAMPLES::
+
+        sage: arnoux_yoccoz_factor(3)
+        1.83928675521
+        sage: arnoux_yoccoz_factor(3, field = QQbar)
+        1.839286755214161?
+
+    """
     R.<x> = ZZ[]
     poly = R([-1] * genus + [1])
     return max([abs(x[0]) for x in poly.roots(field)])
 
 class Interval(object):
+    """
+    An interval of the unit interval $[0,1]$ with opposite sides 
+    identified.
+
+    INPUT:
+
+    - ``left_endpoint`` - PointWithCoefficients
+    - ``right_endpoint`` - PointWithCoefficients
+    - ``left_openness`` - 'closed' or 'open'. The default is 'closed'
+    - ``right_openness`` - 'closed' or 'open'. The default is 'open'
+
+    EXAMPLES:
+
+    Any usual interval can be specified::
+
+        sage: Interval(PointWithCoefficients(1/2, [2, 1]), \
+                PointWithCoefficients(3/5, [4, -1]))
+        [(1/2, (2, 1)), (3/5, (4, -1)))
+        sage: Interval(PointWithCoefficients(0, [0]), \
+                PointWithCoefficients(0.4, [1]), 'open', 'closed')
+        ((0, (0)), (0.400000000000000, (1))]
+        
+    But intervals wrapping around the endpoints are also considered::
+
+        sage: Interval(PointWithCoefficients(1/2, [0, 1]), \
+                PointWithCoefficients(1/4, [1, -2]),'closed','closed')
+        [(1/2, (0, 1)), (1/4, (1, -2))]
+
+    One can get the endpoints by indexing and the length() using the 
+    length()::
+
+        sage: i = Interval(PointWithCoefficients(1/5, (1, 2)), \
+                PointWithCoefficients(4/7, (6, -1)))
+        sage: i[0]
+        (1/5, (1, 2))
+        sage: i[1]
+        (4/7, (6, -1))
+        sage: i.length()
+        (13/35, (5, -3))
+
+        sage: j = Interval(PointWithCoefficients(1/2, [0, 1]), \
+                PointWithCoefficients(1/4, [1, -2]),'closed','closed')
+        sage: j.length()
+        (3/4, (2, -3))
+    
+    """
     def __init__(self, left_endpoint, right_endpoint,
-            is_closed_on_left = True, is_closed_on_right = False):
+            left_openness = 'closed', right_openness = 'open'):
+        if not isinstance(left_endpoint, PointWithCoefficients) or \
+                not isinstance(right_endpoint,PointWithCoefficients) :
+            raise ValueError("The endpoints of the interval must be "
+                    "PointWithCoefficients objects.")
+        if not 0 <= left_endpoint.value < 1 or not \
+                0 <= right_endpoint.value < 1:
+                    raise ValueError("The endpoints of the Interval "
+                            "must be between 0 and 1.")
         self._lep = left_endpoint
         self._rep = right_endpoint
-        self._is_closed_on_left = is_closed_on_left
-        self._is_closed_on_right = is_closed_on_right
+        if not {'closed', 'open'} >= {left_openness, right_openness}:
+            raise ValueError('Openness arguments should be either '
+                    '\'closed\' or \'open\'')
+        self._left_openness = left_openness
+        self._right_openness = right_openness
 
     @staticmethod
     def _less(x, y, is_equality_allowed):
+        """
+        Unifies the < and <= operators in a single function.
+
+        INPUT:
+
+        - ``x`` - a number
+        - ``y`` - another number
+        - ``is_equality_allowed`` - if True, the function returns 
+          x<=y, otherwise x<y
+
+        TESTS::
+
+            sage: Interval._less(1, 2, True)
+            True
+            sage: Interval._less(2, 1, True)
+            False
+            sage: Interval._less(1, 1, True)
+            True
+            sage: Interval._less(1, 1, False)
+            False
+
+        """
         if is_equality_allowed:
             return x <= y
         else:
             return x < y
 
     def __repr__(self):
+        """
+        Returns the representation of self.
+
+        TESTS::
+
+        sage: Interval(PointWithCoefficients(1/2, [0, 1]), \
+                PointWithCoefficients(1/4, [1, -2]),'closed','closed')
+        [(1/2, (0, 1)), (1/4, (1, -2))]
+
+        """
         s = ''
-        if self._is_closed_on_left:
+        if self._left_openness == 'closed':
             s += '['
         else:
             s += '('
-        s += str(self._lep) + ',' + str(self._rep)
-        if self._is_closed_on_right:
+        s += str(self._lep) + ', ' + str(self._rep)
+        if self._right_openness == 'closed':
             s += ']'
         else:
             s += ')'
         return s
 
     def __getitem__(self, index):
+        """
+        Returns the left or right endpoint of the interval.
+
+        INPUT:
+
+        - ``index`` - either 0 or 1, for the left and right endpoints
+          respectively
+
+        OUTPUT:
+
+        - PointWithCoefficients - one of the endpoints
+
+        EXAMPLES::
+
+            sage: i = Interval(PointWithCoefficients(1/5, (1, 2)), \
+                    PointWithCoefficients(4/7, (6, -1)))
+            sage: i[0]
+            (1/5, (1, 2))
+            sage: i[1]
+            (4/7, (6, -1))
+
+        """
         if index == 0:
             return self._lep
         if index == 1:
             return self._rep
 
     def length(self):
+        """
+        Returns the length of the interval.
+
+        OUTPUT:
+
+        - PointWithCoefficients - the length of the interval
+
+        EXMAPLES::
+
+            sage: i = Interval(PointWithCoefficients(1/5, (1, 2)), \
+                    PointWithCoefficients(4/7, (6, -1)))
+            sage: i.length()
+            (13/35, (5, -3))
+
+            sage: j = Interval(PointWithCoefficients(0.5, [0, 1]), \
+                PointWithCoefficients(0.25,[1, -2]),'closed','closed')
+            sage: j.length()
+            (0.750000000000000, (2, -3))
+    
+        """
         return (self._rep - self._lep).mod_one()
 
     def contains(self, point):
-        if self._lep.value <= self._rep.value:
-            if self._less(self._lep.value, point.value, 
-                    self._is_closed_on_left) and\
-                    self._less(point.value, self._rep.value, 
-                            self._is_closed_on_right):
+        """
+        Decides if a point in contained in self.
+
+        The cooefficients of the point don't matter, only the value.
+
+        INPUT:
+
+        - ``point`` - PointWithCoefficients, must be in the unit
+          interval $[0, 1)$
+
+        OUTPUT:
+
+        - boolean - True if ``point`` is contained in self,
+          False if not
+
+        EXAMPLES::
+
+            sage: i = Interval(PointWithCoefficients(0.25, [0, 1]), \
+                PointWithCoefficients(0.5,[1, -2]),'open','closed')
+            sage: i.contains(PointWithCoefficients(0.1, [1,1]))
+            False
+            sage: i.contains(PointWithCoefficients(0.3, [-2,6]))
+            True
+            sage: i.contains(PointWithCoefficients(0.25, [-1,5]))
+            False
+            sage: i.contains(PointWithCoefficients(0.5, [1,7]))
+            True
+
+            sage: j = Interval(PointWithCoefficients(0.5, [0, 1]), \
+                PointWithCoefficients(0.25,[1, -2]),'closed','open')
+            sage: j.contains(PointWithCoefficients(0.1, [1,1]))
+            True
+            sage: j.contains(PointWithCoefficients(0.3, [-2,6]))
+            False
+            sage: j.contains(PointWithCoefficients(0.25, [-1,5]))
+            False
+            sage: j.contains(PointWithCoefficients(0.5, [1,7]))
+            True
+
+            sage: k = Interval(PointWithCoefficients(0.3, (1,1)),\
+                    PointWithCoefficients(0.3, (1,1)))
+            sage: k.contains(PointWithCoefficients(0.3, (1,1)))
+            False
+
+            sage: l = Interval(PointWithCoefficients(0.3, (1,1)),\
+                    PointWithCoefficients(0.3, (1,1)), 'closed', \
+                    'closed')
+            sage: l.contains(PointWithCoefficients(0.3, (1,1)))
+            True
+
+        """
+        if not 0 <= point.value < 1:
+            raise ValueError("Only points in the unit interval can be"
+                    " tested for containment")
+        if self[0].value <= self[1].value:
+            if self._less(self[0].value, point.value, 
+                    is_equality_allowed = (self._left_openness == 
+                        'closed')) and\
+                    self._less(point.value, self[1].value, 
+                            is_equality_allowed = 
+                            (self._right_openness == 'closed')):
                 return True
             else:
                 return False
-        if self._less(self._rep.value, point.value, 
-                not self._is_closed_on_right) and\
-                self._less(point.value, self._lep.value, 
-                        not self._is_closed_on_left):
+        if self._less(self[1].value, point.value, 
+                is_equality_allowed = 
+                (self._right_openness == 'open')) and\
+                self._less(point.value, self[0].value, 
+                    is_equality_allowed =
+                        (self._left_openness == 'open')):
             return False
         else:
             return True
@@ -1094,6 +1234,7 @@ def get_good_eigendata(transition_matrix, is_twisted):
                     normalized_vec = [abs(y / norm) for y in vec]
                     ret_list.append((x[0], normalized_vec))
     return ret_list
+
 class SaddleConnectionError(Exception):
     pass
 
@@ -1104,20 +1245,14 @@ class RestrictionError(Exception):
     def __str__(self):
         return self.value
 
+futyi = 'Anyaddal szorakozzal.'
 
 class Foliation(SageObject):
     def __init__(self, involution, lengths, twist = None):
-        if involution.is_bottom_side_moebius():
-            #if twist != None:
-            #    raise ValueError('When one side is a Moebius band, '
-            #            'the twist is irrelevant.')
-            #twist = 0
-            pass
-        #    self._alphabet.remove(involution[1][0])
-        else:
+        if not involution.is_bottom_side_moebius():
             if twist == None:
                 raise ValueError('The twist must be specified '
-                        'unless one side is a Moebius band. ')
+                'unless the bottom side is a Moebius band.')
 
         if isinstance(lengths, list):
             if len(lengths) != len(involution.alphabet()):
@@ -1127,52 +1262,45 @@ class Foliation(SageObject):
                         
         if isinstance(lengths, dict):
             if set(involution.alphabet()) != set(lengths.keys()):
-                raise ValueError('Invalid length specification')
+                raise ValueError('Invalid length specification')     
             lcopy = dict(lengths)
 
-        if any(v <=0 for v in lcopy.values()):
+        if any(v <= 0 for v in lcopy.values()):
             raise ValueError('Lengths must be positive')
 
         if involution.is_bottom_side_moebius():
-            totals = [sum(lcopy[involution[0][j]] for j in\
-                range(len(involution[0])))]
-            totals.append(totals[0])
-            self._num_coeffs = len(lcopy)
-        else:
-            totals = [sum(lcopy[involution[i][j]] for j in\
-                    range(len(involution[i]))) for i in range(2)]
+            lcopy['JOKER'] = sum(lcopy.values())
+            twist = 0
+        if involution.is_torus():
+            lcopy['JOKER'] = 1
 
-            if abs(totals[0] - totals[1]) > epsilon:
-                raise ValueError('The total length on the top and '
-                        'bottom are inconsistent.')
-            
-            #adjusting lengths in case they 
-            #differ slightly on top/bottom
-            for j in range(len(involution[0])):
-                if involution.pair((0, j))[0] == 0:
-                    lcopy[involution[i][j]] += \
-                            (totals[1] - totals[0])/2
-                    break
-            self._num_coeffs = len(lcopy) + 1
+        totals = [sum(lcopy[letter] for letter in involution[i]) 
+                for i in range(2)]
+
+        if abs(totals[0] - totals[1]) > epsilon:
+            raise ValueError('The total length on the top and '
+                    'bottom are inconsistent.')
+        
+        #adjusting lengths in case they 
+        #differ slightly on top/bottom
+        for j in range(len(involution[0])):
+            if involution.pair((0, j))[0] == 0:
+                lcopy[involution[i][j]] += \
+                        (totals[1] - totals[0])/2
+                break
 
         self._lengths = {}
         for letter in lcopy:
             self._lengths[letter] = PointWithCoefficients(\
                     lcopy[letter]/totals[1], 
-                    self._basis_vector(self._num_coeffs,
-                        involution.index(letter)),
-                    one_sided = involution.is_bottom_side_moebius())
-
+                    self._basis_vector(len(lcopy) + 1,
+                        involution.index(letter)))
 
         self._divpoints = [[PointWithCoefficients(0,
-            [0] * self._num_coeffs, 
-            one_sided = involution.is_bottom_side_moebius())] 
+            [0] * (len(lcopy) + 1))]
             for i in range(2)] 
 
         for i in range(2):
-            if i == 1 and involution.is_bottom_side_moebius():
-                self._divpoints[1] = []
-                break
             for j in range(len(involution[i]) - 1):
                 self._divpoints[i].append(self._divpoints[i][-1] +
                         self._lengths[involution[i][j]])
@@ -1180,28 +1308,22 @@ class Foliation(SageObject):
         self._divvalues = [[x.value for x in self._divpoints[i]] 
             for i in range(2)]
 
-        if involution.is_bottom_side_moebius():
-            #self._twist = PointWithCoefficients(0, 
-            #        [0] * self._num_coeffs, one_sided = True)
-            self._involution = involution
-        else:
-            preimage_of_zero = self._mod_one(-twist/totals[1])
-            containing_int = bisect_left(self._divvalues[1], 
-                    preimage_of_zero) % len(involution[1])
-            self._involution = involution.rotated(0, -containing_int)
-            self._twist = PointWithCoefficients(self._mod_one(\
-                    self._divpoints[1][containing_int].value - 
-                    preimage_of_zero), [0] * len(lcopy) + [1])
-            self._divpoints[1] = [self._twist]
-            for j in range(len(involution[1]) - 1):
-                self._divpoints[1].append(self._divpoints[1][-1] +
-                        self._lengths[self._involution[1][j]])
+        preimage_of_zero = self._mod_one(-twist/totals[1])
+        containing_int = bisect_left(self._divvalues[1], 
+                preimage_of_zero) % len(involution[1])
+        self._involution = involution.rotated(0, -containing_int)
+        self._twist = PointWithCoefficients(self._mod_one(\
+                self._divpoints[1][containing_int].value - 
+                preimage_of_zero), [0] * len(lcopy) + [1])
+        self._divpoints[1] = [self._twist]
+        for j in range(len(involution[1]) - 1):
+            self._divpoints[1].append(self._divpoints[1][-1] +
+                    self._lengths[self._involution[1][j]])
 
         self._divvalues[1] = [x.value for x in self._divpoints[1]] 
 
         self._length_twist_vector = [0] * len(lcopy)
-        if not self._involution.is_bottom_side_moebius():
-            self._length_twist_vector.append(self._twist.value)
+        self._length_twist_vector.append(self._twist.value)
         for letter in self._lengths:
             self._length_twist_vector[self._involution.index(letter)]\
                     = self._lengths[letter].value
@@ -1746,8 +1868,8 @@ class Foliation(SageObject):
         def create_interval(i, j):
             return Interval(endpoints[i].point,
                 endpoints[j].point,
-                is_closed_on_left = endpoints[i].is_closed,
-                is_closed_on_right = endpoints[j].is_closed)
+                left_openness = endpoints[i].is_closed,
+                right_openness = endpoints[j].is_closed)
 
 
         if endpoints[1].end == 'right':
@@ -1825,7 +1947,7 @@ class Foliation(SageObject):
         other_right = self._divpoints[0][(self._involution.pair(\
                 (side2, pos2))[1] + 1) % n]
         center_int = Interval(center_left, center_right,
-                is_closed_on_left = True, is_closed_on_right = True)
+                left_openness = True, right_openness = True)
         if center_int.contains(other_left) or \
                 center_int.contains(other_right):
                     raise RestrictionError('Specified transverse '
@@ -1838,7 +1960,7 @@ class Foliation(SageObject):
         other_left = other_left.half_added()
 
         other_int = Interval(other_left, other_right,
-                is_closed_on_left = False, is_closed_on_right = False)
+                left_openness = False, right_openness = False)
 
         intervals = [center_int, other_int]
 
