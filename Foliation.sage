@@ -71,17 +71,11 @@ class Involution(SageObject):
         sage: _.singularity_type()
         (3, 2, 1, 1, 1)
 
-    If both arguments are omitted, then the trivial permutation
-    is constructed whose suspension is a torus without
-    punctures::
-
-        sage: Involution()
-        Torus
-        sage: _.singularity_type()
-        ()
-
-    Again, this is the only way of specifying an unpunctured
-    torus. The following constructs a once-punctured torus::
+    The mapping class group of the closed torus and the 
+    once-punctured torus are the same, and since we are interested in
+    constructed pseudo-anosovs, we won't complicate the code with
+    treating the case of the closed torus separately. But we can 
+    represent once-punctured tori as follows::
 
         sage: Involution('a', 'a')
         a
@@ -98,11 +92,8 @@ class Involution(SageObject):
         (2, 2)
 
     """
-    def __init__(self, top_letters = None, 
-            bottom_letters = None, 
+    def __init__(self, top_letters, bottom_letters = None, 
             flips = []):
-        if top_letters == None: # torus
-            top_letters = bottom_letters = 'JOKER'
         if bottom_letters == None: # bottom side is Moebius
             bottom_letters = 'JOKER JOKER'
         self._gen_perm = iet.GeneralizedPermutation(\
@@ -178,14 +169,7 @@ class Involution(SageObject):
             -a -a -b -b
             Moebius band
 
-        Or when the suspension is a torus::
-
-            sage: Involution()
-            Torus
-
         """
-        if self.is_torus():
-            return 'Torus'
         if self.is_bottom_side_moebius():
             return repr(self._gen_perm).split('\n')[0] + \
                     '\nMoebius band'
@@ -230,8 +214,6 @@ class Involution(SageObject):
             sage: i == l
             False
         """ 
-        if self.is_torus():
-            return other.is_torus()
         if self.is_bottom_side_moebius() !=\
                 other.is_bottom_side_moebius():
                     return False
@@ -251,9 +233,6 @@ class Involution(SageObject):
             sage: i.alphabet() == {'a', 'b', 'c'}
             True
 
-            sage: i = Involution()
-            sage: i.alphabet()
-            set([])
         """
         s = set(self._gen_perm.alphabet())
         s.discard('JOKER')
@@ -276,10 +255,6 @@ class Involution(SageObject):
             sage: i = Involution('a a', flips = 'a')
             sage: i.flips()
             ['a']
-
-            sage: i = Involution()
-            sage: i.flips()
-            []
 
         """
         if isinstance(self._gen_perm[0][0], tuple):
@@ -617,11 +592,6 @@ class Involution(SageObject):
         sage: _.singularity_type()
         (3, 2, 1, 1, 1)
 
-        sage: Involution()
-        Torus
-        sage: _.singularity_type()
-        ()
-
         sage: Involution('a', 'a')
         a
         a
@@ -635,40 +605,12 @@ class Involution(SageObject):
         (2, 2)
 
         """
-        if self.is_torus():
-            return ()
         t = sorted([x for x in map(len, 
             self._singularity_partition)], reverse = True)
         if self.is_bottom_side_moebius():
             t.remove(2)
         return tuple(t)
-
-    def is_torus(self):
-        """
-        Decides if the suspension of self is a torus without
-        punctures.
-
-        OUTPUT:
-
-        - boolean
-
-        EXAMPLES:
-
-        This is the only way to get a torus::
-
-            sage: i = Involution()
-            sage: i.is_torus()
-            True
-
-        Even tori with punctures return False::
-
-            sage: i = Involution('a', 'a')
-            sage: i.is_torus()
-            False
-
-        """
-        return self[0] == ['JOKER']
-
+    
     def is_bottom_side_moebius(self):
         """
         Decides if the bottom side is Moebius band without
@@ -691,7 +633,7 @@ class Involution(SageObject):
         band, so it returns False::
 
             sage: i = Involution('a a b b', 'c c')
-            sage: i.is_torus()
+            sage: i.is_bottom_side_moebius()
             False
 
         """
@@ -1211,28 +1153,92 @@ class Interval(object):
             return True
 
 
-def has_constant_sign(vec):
-    if abs(vec[0]) < epsilon:
-        return False
-    is_first_positive = (vec[0] > 0)
-    for x in vec:
-        if abs(x) < epsilon  or (x > 0) != is_first_positive:
-            return False
-    return True
+def make_positive(vec):
+    """
+    Returns a parallel vector to a given vector with all positive
+    coordinates if possible.
+
+    INPUT:
+
+    - ``vec`` - a vector or list or tuple of numbers
+
+    OUTPUT:
+
+    - vector - a vector with positive coordinates if this is possible,
+      otherwise -1
+
+    EXAMPLES:
+
+    If all coordinates of the input vector are already positive, the
+    same vector is returned::
+
+        sage: v = vector([1, 3, 5])
+        sage: make_positive(v) == v
+        True
+
+    If all are negative, its negative is returned::
+
+        sage: make_positive((-1, -5))
+        (1, 5)
+
+    Even if the coordinates are complex, but have very small imaginary
+    part as a result of an approximate eigenvector calculation for 
+    example, the coordinates are treated as real::
+
+        sage: make_positive((40.24 - 5.64e-16*I, 1.2 + 4.3e-14*I))
+        (40.2400000000000, 1.20000000000000)
+        sage: make_positive((-40.24 - 5.64e-16*I, -1.2 + 4.3e-14*I))
+        (40.2400000000000, 1.20000000000000)
+
+    If there is a complex coordinate which is not negligible, -1 is
+    returned::
+
+        sage: make_positive((-40.24 - 5.64e-6*I, -1.2 + 4.3e-14*I))
+        -1
+
+    If one coordinate is zero, or very close to zero, -1 is returned::
+
+        sage: make_positive((1, 0, 2))
+        -1
+        sage: make_positive((-40.24e-15*I - 5.64e-16*I, -1.2))
+        -1
+
+    If there are both negative and positive coordinates, -1 is 
+    returned::
+
+        sage: make_positive((-3, 4, 5))
+        -1
+        
+    """
+    if any(abs(x) < epsilon for x in vec) or \
+        any(abs(x.imag()) > epsilon for x in vec):
+            return -1
+    newvec = vector([x.real() for x in vec])
+    if vec[0].real() < 0:
+        newvec = -newvec
+    if any(x < 0 for x in newvec):
+        return -1
+    return newvec
 
 def get_good_eigendata(transition_matrix, is_twisted):
+    """
+    
+
+
+    """
     ev = transition_matrix.eigenvectors_right()
     ret_list = []
     for x in ev:
-        if abs(x[0].imag()) < epsilon and x[0] > 0 \
-                and abs(x[0] - 1) > epsilon:
+        if abs(x[0].imag()) < epsilon and x[0].real() > 0 \
+                and abs(x[0].real() - 1) > epsilon:
             for vec in x[1]:
-                if has_constant_sign(vec):
-                    norm = sum([abs(y) for y in vec])
-                    if not is_twisted:
-                        norm -= abs(vec[-1])
-                    normalized_vec = [abs(y / norm) for y in vec]
-                    ret_list.append((x[0], normalized_vec))
+                newvec = make_positive(vec)
+                if newvec != -1:
+                    norm = sum([abs(y) for y in newvec])
+                    if is_twisted:
+                        norm -= abs(newvec[-1])
+                    normalized_vec = [abs(y / norm) for y in newvec]
+                    ret_list.append((x[0].real(), normalized_vec))
     return ret_list
 
 class SaddleConnectionError(Exception):
@@ -1271,8 +1277,6 @@ class Foliation(SageObject):
         if involution.is_bottom_side_moebius():
             lcopy['JOKER'] = sum(lcopy.values())
             twist = 0
-        if involution.is_torus():
-            lcopy['JOKER'] = 1
 
         totals = [sum(lcopy[letter] for letter in involution[i]) 
                 for i in range(2)]
