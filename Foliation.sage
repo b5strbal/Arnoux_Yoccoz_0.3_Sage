@@ -123,6 +123,8 @@ class Involution(SageObject):
 
         # initializing self._singularity_partition
         done = set()
+        if self.is_bottom_side_moebius():
+            done = {(1,0), (1,1)}
         partition = []
         for (i, j) in self._pair:
             if (i, j) in done:
@@ -147,10 +149,11 @@ class Involution(SageObject):
                 done.add((a, b))
                 if (a, b) == (i, j):
                     break
+
         self._singularity_partition = partition
 
 
-    def __repr__(self):
+    def _repr_(self):
         """
         Returns a representation of self.
 
@@ -565,7 +568,90 @@ class Involution(SageObject):
         bottom_list.reverse()
         return Involution(list(top_list), list(bottom_list),
                 self.flips())
+
+    def singularity_partition(self):
+        """
+        Returns the singularity partition of self.
+
+        OUTPUT:
+
+        - list of lists - each element of the list is a list corresponding to
+          a singularity, and each such list contains the tuples of positions
+          that are being identified
+
+        EXAMPLES::
+
+            sage: i = Involution('a a b b c c')
+            sage: sp = i.singularity_partition()
+            sage: len(sp) == 1
+            True
+            sage: set(sp[0]) == {(0,2), (0,3), (0, 4), (0, 5), (0, 0), (0, 1)}
+            True
+
+            sage: i = Involution('a b c d', 'b a d c', flips = 'ac')
+            sage: sp = i.singularity_partition()
+            sage: len(sp) == 2
+            True
+            sage: set(sp[0]) == {(1, 1), (0, 2), (1, 0), (0, 1)}
+            True
+            sage: set(sp[1]) == {(0, 0), (1, 3), (0, 3), (1, 2)}
+            True
+
+        """
+        return list(self._singularity_partition)
+
+    def which_singularity(self, pos):
+        """
+        Returns the index of the singularity for the beginning of each
+        interval.
+
+        There is a singularity of the foliation on the leaf containing the
+        left endpoint of each interval for any suspension. There may be only
+        one singularity of all the vertices are identified, or more if not.
+        If there are $n$ singularities ($n\ge 1$), we assign 0, 1, ..., $n-1$
+        to them in some order, this is called its index. The index is 
+        therefore well-defined only up to a permutation of these values.
+
+        INPUT:
+
+        - ``pos`` - a tuple encoding the position. The first
+          coordinate is 0 or 1 depending on whether it is a top
+          or bottom interval. The second coordinate is the
+          index of the interval in that row.
         
+        OUTPUT:
+
+        - integer - the index of the specified singularity. 
+
+        EXAMPLES:
+
+        The following Involution has 2 singularities, one has 5 prongs, the
+        other 1 prong. The position of the 1-prong singularity is at (1,0).
+        Here is a possible output:
+
+            sage: i = Involution('a a b', 'c b c', flips = 'c')
+            sage: i.singularity_type()
+            (5, 1)
+            sage: i.which_singularity((0,0)) 
+            0
+            sage: i.which_singularity((0,1)) 
+            0
+            sage: i.which_singularity((0,2)) 
+            0
+            sage: i.which_singularity((1,0)) 
+            1
+            sage: i.which_singularity((1,1)) 
+            0
+            sage: i.which_singularity((1,2)) 
+            0
+
+        """
+        sp = self._singularity_partition
+        for i in range(len(sp)):
+            if pos in sp[i]:
+                return i
+        raise ValueError("Invalid singularity specification.")
+         
     def singularity_type(self):
         """
         Returns the singularity type of self.
@@ -580,35 +666,33 @@ class Involution(SageObject):
 
         EXAMPLES::
 
-        sage: Involution('a a b b c c', flips = 'abc')
-        -a -a -b -b -c -c
-        Moebius band
-        sage: _.singularity_type()
-        (3, 1, 1, 1)
+            sage: Involution('a a b b c c', flips = 'abc')
+            -a -a -b -b -c -c
+            Moebius band
+            sage: _.singularity_type()
+            (3, 1, 1, 1)
 
-        sage: Involution('a a b b c c', 'd d', flips = 'abc')
-        -a -a -b -b -c -c
-         d  d
-        sage: _.singularity_type()
-        (3, 2, 1, 1, 1)
+            sage: Involution('a a b b c c', 'd d', flips = 'abc')
+            -a -a -b -b -c -c
+             d  d
+            sage: _.singularity_type()
+            (3, 2, 1, 1, 1)
 
-        sage: Involution('a', 'a')
-        a
-        a
-        sage: _.singularity_type()
-        (2,)
+            sage: Involution('a', 'a')
+            a
+            a
+            sage: _.singularity_type()
+            (2,)
 
-        sage: Involution('a b', 'a b')
-        a b 
-        a b
-        sage: _.singularity_type()
-        (2, 2)
+            sage: Involution('a b', 'a b')
+            a b 
+            a b
+            sage: _.singularity_type()
+            (2, 2)
 
         """
         t = sorted([x for x in map(len, 
             self._singularity_partition)], reverse = True)
-        if self.is_bottom_side_moebius():
-            t.remove(2)
         return tuple(t)
     
     def is_bottom_side_moebius(self):
@@ -771,7 +855,7 @@ class PointWithCoefficients(SageObject):
         self.value = value
         self.coefficients = vector(coefficients)
 
-    def __repr__(self):
+    def _repr_(self):
         """
         Returns the representation of self.
 
@@ -909,7 +993,7 @@ def arnoux_yoccoz_factor(genus, field = RDF):
     poly = R([-1] * genus + [1])
     return max([abs(x[0]) for x in poly.roots(field)])
 
-class Interval(object):
+class Interval(SageObject):
     """
     An interval of the unit interval $[0,1]$ with opposite sides 
     identified.
@@ -1003,7 +1087,7 @@ class Interval(object):
         else:
             return x < y
 
-    def __repr__(self):
+    def _repr_(self):
         """
         Returns the representation of self.
 
@@ -1251,10 +1335,271 @@ class RestrictionError(Exception):
     def __str__(self):
         return self.value
 
-futyi = 'Anyaddal szorakozzal.'
+_tikzcolors = ["red", "green", "blue", "cyan", "magenta", "yellow", 
+    "gray", "brown", "lime", "olive", "orange", "pink", "purple", 
+    "teal", "violet"]
 
+def _tikzcolor(n):
+    return _tikzcolors[n % len(_tikzcolors)]
+ 
 class Foliation(SageObject):
+    """
+    A measured foliation on a surface of finite type.
+
+    Given a measured foliation we consider a two-sided simple closed
+    curve on the surface which is transverse to the foliation. This 
+    gives an interval exchange of the circle which is represented by
+    an Involutions, length parameters, and a twist parameter. The 
+    measure is always normalized so that the length of the curve is 1.
+
+    We consider only surfaces with negative Euler characteristic, so
+    foliations on the closed tori and closed Klein bottle are not 
+    represented. By the Euler-Poincare theorem the foliation must have
+    an even number of separatrices, say $2k$, where $k > 0$. There
+    are two cases: all these separatrices hit our simple closed curve
+    from above, or there is at least one separatrix hitting each side.
+
+    In the first case the bottom side of the curve is a Moebius band,
+    so we don't need a twist parameter. But even though we wouldn't
+    need a length parameter for the bottom side to uniquely
+    represent the foliation (it can be expressed in terms of the 
+    length parameters above the curve), we consider 1/2 as the twist
+    paratemeter for the bottom side with interval exchange imagined
+    as 'z z'. Thus we have $k + 1$ parameters.
+
+    In the other case there are $k$ length parameters (which again
+    may not be independent), but a twist parameter here is 
+    necessary which is $k + 1$ parameters again. This consistency may
+    be useful for dealing with transition matrices between parameters
+    of the same foliation, but looked at from the perspective of
+    different simple closed curves.
+
+    INPUT:
+
+    - ``involution`` - an Involution, serving as the combinatorial
+      description of the interval exchange
+
+    - ``lenghts`` - as in iet.IntervalExchangeTransformation,
+      this is either a list or dictionary of the length parameters.
+      If it is a list, then the lengths are assigned to intervals
+      in the order of their appearance in the Involution (their
+      "index"). If it's a dict, then lengths should be assigned to
+      the names of the intervals in the Involution.
+
+    - ``twist`` - a real number, the twist parameter. This can 
+      (and recommended to) be omitted if the bottom side is a 
+      Moebius band, otherwise it is mandatory, because defaulting to
+      zero would lead to an immediate saddle connection.
+
+    EXAMPLES:
+    
+    Here are two different but equivalent definitions::
+
+        sage: i = Involution('a a b b', 'c c', flips = 'b')
+        sage: f = Foliation(i, [1, 2, 3], 1/2); f
+        a a -b -b
+        c c
+        Lengths: (1/6, 1/3, 1/2)
+        Twist: 1/12
+
+        sage: g = Foliation(i, {'a':1,'b':2,'c':3}, 1/2); f
+        a a -b -b
+        c c
+        Lengths: (1/6, 1/3, 1/2)
+        Twist: 1/12
+
+        sage: f == g
+        True
+
+    Omitting the twist if the bottom side is not a Moebius band
+    throws an error::
+
+        sage: Foliation(i, [1, 2, 3])
+        Traceback (most recent call last):
+        ...
+        ValueError: The twist must be specified unless the bottom side is a Moebius band.
+
+    When the bottom side is a Moebius band, it is okay to omit the 
+    twist::
+
+        sage: Foliation(Involution('a a b b c c'), [2, 2, 1])
+        a a b b c c
+        Moebius band
+        Lengths: (1/5, 1/5, 1/10)
+
+    The sum of the lengths on top and the sum at the bottom should
+    (approximately) equal::
+
+        sage: Foliation(i, [1, 1, 3], 1/2)
+        Traceback (most recent call last):
+        ...
+        ValueError: The total length on the top and bottom are inconsistent.
+
+    If they are just approximately equal, then on top of the
+    normalization, the lengths are adjusted so the sums on top and 
+    bottom are equal::
+
+        sage: Foliation(i, [1, 2, 3.0000000000001], 1/2)
+        a a -b -b
+        c c
+        Lengths: (0.166666666666661, 0.333333333333322, 0.500000000000017)
+        Twist: 0.0833333333333306
+
+    In reality, the same twisted interval exchange transformation can
+    be represented by different Involutions and twist parameters. 
+    For instance depending on which separatrix is chosen to be zero,
+    the top letters can be 'a a b b', 'a b b a', 'b b a a' or
+    'b a a b'. But even if one chooses one of these, varying the twist
+    and the Involution can result in the same Foliation::
+
+        sage: i = Involution('a b c', 'a c b'); i
+        a b c
+        a c b
+        sage: f = Foliation(i, [1, 2, 3], 1); f
+        a b c
+        a c b
+        Lengths: (1/6, 1/3, 1/2)
+        Twist: 1/6
+
+        sage: j = Involution('a b c', 'c b a'); j
+        a b c
+        c b a
+        sage: g = Foliation(j, [1, 2, 3], 2); g
+        a b c
+        a c b
+        Lengths: (1/6, 1/3, 1/2)
+        Twist: 1/6
+
+        sage: f == g
+        True
+
+    So rotate the bottom row of the Involution and change the twist
+    if necessary to obtain the smallest possible positive twist. One
+    can easily check that the Foliations f and g above have an 
+    immediate saddle connection therefore they are not candidates for
+    pseudo-anosov stable foliations. We don't check this in the
+    constructor, only later when separatrices are lengthened to find
+    other curves.
+
+    """ 
+
+    @staticmethod
+    def _mod_one(x):
+        """
+        Returns a number modulo 1.
+
+        INPUT:
+
+        - ``x`` - a real number
+
+        OUTPUT:
+
+        - a real number of the same type as the input
+
+        TESTS::
+
+            sage: Foliation._mod_one(2.5)
+            0.500000000000000
+            sage: Foliation._mod_one(-1.7)
+            0.300000000000000
+            sage: Foliation._mod_one(7/6)
+            1/6
+            sage: Foliation._mod_one(-1/6)
+            5/6
+            sage: a = QQbar(sqrt(2)); a
+            1.414213562373095?
+            sage: Foliation._mod_one(a)
+            0.4142135623730951?
+
+        """
+        return x - floor(x)
+
+    @staticmethod
+    def _basis_vector(n, k):
+        """
+        Returns a standard basis vector of a vector space.
+
+        INPUT:
+
+        - ``n`` - positive integer, the dimension of the vector space
+
+        - ``k`` - 0 <= k < n, the index of the only coordinate which
+          is 1.
+
+        OUTPUT:
+
+        - list - the basis vector in as a list
+
+        EXAMPLES::
+
+            sage: Foliation._basis_vector(5, 1)
+            [0, 1, 0, 0, 0]
+            sage: Foliation._basis_vector(7, 6)
+            [0, 0, 0, 0, 0, 0, 1]
+
+        """
+        l = [0] * n
+        l[k] = 1
+        return l
+
     def __init__(self, involution, lengths, twist = None):
+        """
+        TESTS::
+
+            sage: i = Involution('a b c', 'a c b'); i
+            a b c
+            a c b
+            sage: f = Foliation(i, [1, 2, 3], 1); f
+            a b c
+            a c b
+            Lengths: (1/6, 1/3, 1/2)
+            Twist: 1/6
+            sage: f._divpoints
+            [[(0, (0, 0, 0, 0)), (1/6, (1, 0, 0, 0)), (1/2, (1, 1, 0, 0))], [(1/6, (0, 0, 0, 1)), (1/3, (1, 0, 0, 1)), (5/6, (1, 0, 1, 1))]]
+            sage: f._divvalues
+            [[0, 1/6, 1/2], [1/6, 1/3, 5/6]]
+            sage: f._lengths['a']
+            (1/6, (1, 0, 0, 0))
+            sage: f._lengths['b']
+            (1/3, (0, 1, 0, 0))
+            sage: f._lengths['c']
+            (1/2, (0, 0, 1, 0))
+            sage: f._twist
+            (1/6, (0, 0, 0, 1))
+            sage: f._involution
+            a b c
+            a c b
+
+            sage: i = Involution('a a b b c c'); i
+            a a b b c c
+            Moebius band
+            sage: f = Foliation(i, [1, 2, 3]); f
+            a a b b c c
+            Moebius band
+            Lengths: (1/12, 1/6, 1/4)
+            sage: f._divpoints
+            [[(0, (0, 0, 0, 0, 0)),
+              (1/12, (1, 0, 0, 0, 0)),
+                (1/6, (2, 0, 0, 0, 0)),
+                  (1/3, (2, 1, 0, 0, 0)),
+                    (1/2, (2, 2, 0, 0, 0)),
+                      (3/4, (2, 2, 1, 0, 0))],
+                       [(0, (0, 0, 0, 0, 1)), (1/2, (0, 0, 0, 1, 1))]]
+            sage: f._divvalues
+            [[0, 1/12, 1/6, 1/3, 1/2, 3/4], [0, 1/2]]
+            sage: f._lengths['a']
+            (1/12, (1, 0, 0, 0, 0))
+            sage: f._lengths['b']
+            (1/6, (0, 1, 0, 0, 0))
+            sage: f._lengths['c']
+            (1/4, (0, 0, 1, 0, 0))
+            sage: f._twist
+            (0, (0, 0, 0, 0, 1))
+            sage: f._involution
+            a a b b c c
+            Moebius band
+
+        """
         if not involution.is_bottom_side_moebius():
             if twist == None:
                 raise ValueError('The twist must be specified '
@@ -1333,16 +1678,6 @@ class Foliation(SageObject):
                     = self._lengths[letter].value
         self._length_twist_vector = vector(self._length_twist_vector)
 
-    @staticmethod
-    def _mod_one(x):
-        return x - floor(x)
-
-    @staticmethod
-    def _basis_vector(n, k):
-        l = [0] * n
-        l[k] = 1
-        return l
-
     @classmethod
     def orientable_arnoux_yoccoz(self, genus):
         sf = arnoux_yoccoz_factor(genus)
@@ -1356,26 +1691,138 @@ class Foliation(SageObject):
         return Foliation(Involution.nonorientable_arnoux_yoccoz(\
                 genus), [1/sf^i for i in range(genus - 1)])
 
+    def __eq__(self, other):
+        return self._involution == other._involution and\
+                abs(self._length_twist_vector -
+                    other._length_twist_vector) < epsilon
+
+    def _repr_(self):
+        if self._involution.is_bottom_side_moebius():
+            return "{0}\nLengths: {1}".format(\
+                    self._involution, self._length_twist_vector[:-2])
+        return "{0}\nLengths: {1}\nTwist: {2}".format(\
+                self._involution, self._length_twist_vector[:-1], 
+                self._twist.value)
+
+       
+
+    def _latex_(self, size = 15, color_strength = 50, 
+            interval_labelling = True,
+            length_labelling = True):
+        r"""
+        Returns the Latex/Tikz representation of the foliation.
+
+        INPUT:
+
+        - ``size`` - the width of the Tikz picture in cm's. (Usually the height
+          as well, though that can be smaller.
+
+        - ``color_strength`` - an integer on a scale of 0 to 100. The lower
+          the strength the more white is mixed with the colors. 0 means no
+          coloring.
+
+        - ``interval_labelling`` - boolean, whether the intervals are 
+          labelled
+
+        - ``length_labelling`` - boolean, whether the lengths of the intervals
+          are indicated on the picture. For simpler Foliations this could be
+          useful, but if there are really short intervals, it is better to 
+          turn this off since there is no room for these decimals.
+
+        OUTPUT:
+
+        - string - the latex representation
+
+        """
+        latex.add_to_preamble('\usepackage{tikz}\n')
+        s = '\\begin{{tikzpicture}}[scale = {0},'\
+            'font=\\tiny]\n'.format(size)
+        singularities = ''
+        lines = ''
+        fillings = ''
+        labels = ''
+        pos = 'above'
+        for i in {0,1}:
+            if i == 1:
+                pos = 'below'
+            if i == 1 and self._involution.is_bottom_side_moebius():
+                lines += '\\draw (0,-0.2) [dotted] -- (1,-0.2);\n'
+                fillings += '\\fill[yellow!{cs}!white] (0,0) rectangle '\
+                        '(1,-0.2);\n'.format(cs = color_strength / 2)
+                labels += '\\node[font = \large] at (0.5, -0.1) '\
+                        '{{Moebius band}};\n'
+                break
+            for j in range(len(self._divvalues[i])):
+                begin_percent = color_strength
+                end_percent = 0
+
+                signed_letter = letter = self._involution[i][j]
+                if self._involution.is_flipped((i,j)):
+                    signed_letter = '-' + letter
+                    if (i, j) > self._involution.pair((i,j)):
+                        begin_percent, end_percent = end_percent, begin_percent
+
+                x1 = self._divvalues[i][j]
+                x2 = self._divvalues[i][j] + \
+                        self._lengths[letter].value
+                midx = (x1 + x2)/2
+                y = (-1)^i*0.5
+                p1 = '({0},0)'.format(x1)
+                p2 = '({0},{1})'.format(x1, y)
+                p3 = '({0},{1})'.format(x2, y)
+                p4 = '({0},0)'.format(x2)
+
+                color = _tikzcolor(self._involution.index(letter))
+
+                lines += '\\draw {0} -- {1};\n'.format(p1, p2)
+                if i == 0 or j < len(self._divvalues[i]) - 1:
+                    lines += '\\draw[dashed] {0} -- {1};\n'.format(p2, p3)
+                    fillings += '\\shade[left color = {0}!{bp}!white, '\
+                            'right color = {0}!{ep}!white] {1} rectangle '\
+                            '{2};\n'.format(color, p1, p3, 
+                                    bp = begin_percent, ep = end_percent)
+                else:
+                    p3 = '({0},{1})'.format(x2 - 1, y)
+                    if x2 - 1 > 1 - x1:
+                        midx -= 1
+                    lines += '\\draw[dashed] {0} -- {1};\n'.format(p2, 
+                        '(1,-0.5)')
+                    lines += '\\draw[dashed] {0} -- {1};\n'.format(
+                            '(0,-0.5)', p3)
+                    middle_percent = color_strength * (x2 - 1) / (x2 - x1)
+                    fillings += '\\shade[left color = {0}!{bp}!white, '\
+                            'right color = {0}!{mp}!white] {1} rectangle '\
+                            '{2};\n'.format(color, p1, '(1,-0.5)', 
+                                    mp = middle_percent, bp = begin_percent)
+                    fillings += '\\shade[left color = {0}!{mp}!white, '\
+                            'right color = {0}!{ep}!white] {1} rectangle '\
+                            '{2};\n'.format(color, '(0,0)', p3, 
+                                    mp = middle_percent, ep = end_percent)
+
+                sing_color = _tikzcolor(self._involution.\
+                        which_singularity((i,j)))
+                singularities += '\\filldraw[fill={col}, draw = black] {0} '\
+                        'circle (0.005);\n'.format(p2, col = sing_color)
+                if length_labelling:
+                    labels += '\\node at ({0},0) [{1}] {{{2}}};\n'.\
+                            format(midx, pos, signed_letter)
+                if interval_labelling:
+                    labels += '\\node at ({0},{1}) [{2}] {{{3}}};\n'.\
+                            format(midx, y, pos, round(x2 - x1, 4))
+
+        lines += '\\draw (1,0) -- (1,0.5);\n'\
+                '\\draw[very thick] (0,0) -- (1,0);\n'
+        s += fillings + lines + singularities + labels
+        s += '\\end{tikzpicture}'
+        return s
+
+
     @classmethod
     def RP2_arnoux_yoccoz(self):
         sf = arnoux_yoccoz_factor(3)
         return Foliation(Involution.RP2_arnoux_yoccoz(), 
                 [1/sf + 1/sf^2, 1/sf^2 + 1/sf^3, 1/sf + 1/sf^3])
                 
-
-    def __eq__(self, other):
-        return self._involution == other._involution and\
-                abs(self._length_twist_vector -
-                    other._length_twist_vector) < epsilon
-
-    def __repr__(self):
-        if self._involution.is_bottom_side_moebius():
-            return "{0}\nLengths:{1}".format(\
-                    self._involution, self._length_twist_vector)
-        return "{0}\nLengths:{1}\nTwist:{2}".format(\
-                self._involution, self._length_twist_vector[:-1], 
-                self._twist.value)
-
 
     TransitionData = namedtuple('TransitionData', 'tr_matrix,new_inv')
 
